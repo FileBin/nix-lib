@@ -2,7 +2,7 @@
 with pkgs;
 nix-lib.mkUixVscodeShell {
   uixShellGuid = "56c1d145-77bc-47ef-8eb3-ac0126f158f1";
-  
+
   vscodeOptions.userSettings = {
     "nix.enableLanguageServer"=true;
     "nix.serverPath"="nixd";
@@ -23,6 +23,7 @@ nix-lib.mkUixVscodeShell {
     "files.associations"= {
         "*.uix"= "nix";
     };
+    "git.autofetch"=true;
   };
 
   vscodeExtensions = with vscode-extensions; [
