@@ -49,6 +49,4 @@ nix-lib.mkUixVscodeShell {
     nixd
     python3
   ];
-
-  uixHook = "start-vscode";
 }

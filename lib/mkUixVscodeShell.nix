@@ -1,6 +1,7 @@
 { mkUixShell }:
 { pkgs, lib, ... }:
 {
+  uixHook ? "start-vscode",
   uixShellGuid,
   packages ? [ ],
   vscodeExtensions ? [ ],
@@ -8,7 +9,7 @@
   ...
 }@args:
 let
-  userSettings = vscodeOptions.userSettings or { a = "test"; };
+  userSettings = vscodeOptions.userSettings or { };
 
   packagesWrap = packages ++ [
     start-vscode
@@ -84,8 +85,9 @@ let
     '';
 
   cleanArgs = removeAttrs args [
+    "uixHook"
     "packages"
     "vscodeOptions"
   ];
 in
-mkUixShell (cleanArgs // { packages = packagesWrap; })
+mkUixShell (cleanArgs // { packages = packagesWrap; inherit uixHook; })
