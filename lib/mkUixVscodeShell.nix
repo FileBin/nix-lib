@@ -8,7 +8,7 @@
   ...
 }@args:
 let
-  userSettings = vscodeOptions.userSettings or { a="test"; };
+  userSettings = vscodeOptions.userSettings or { a = "test"; };
 
   packagesWrap = packages ++ [
     start-vscode
@@ -32,7 +32,8 @@ let
       # TODO move it to nix-lib function
       overwrite-link =
         { src, dest }:
-        let src-dir = builtins.dirOf src;
+        let
+          src-dir = builtins.dirOf src;
         in
         ''
           [ ! -e "${src-dir}" ] && mkdir -p "${src-dir}"
@@ -52,8 +53,9 @@ let
         "GPUCache"
       ];
 
-      userSettingsJSON =
-        pkgs.writeText "${uixShellGuid}-userSettings.json" (builtins.toJSON userSettings);
+      userSettingsJSON = pkgs.writeText "${uixShellGuid}-userSettings.json" (
+        builtins.toJSON userSettings
+      );
     in
     pkgs.writeShellScriptBin "start-vscode" ''
       USER_DATA_DIR="$UIX_DATADIR/vscode/userdata"
