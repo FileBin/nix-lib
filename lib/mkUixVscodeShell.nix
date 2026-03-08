@@ -81,7 +81,7 @@ let
         dest = userSettingsJSON;
       }}
 
-      TMPDIR="$UIX_TMPDIR" code --extensions-dir "${combinedExtensionsDrv}/share/vscode/extensions" --user-data-dir="$USER_DATA_DIR" .
+      TMPDIR="$UIX_TMPDIR" code -n --extensions-dir "${combinedExtensionsDrv}/share/vscode/extensions" --user-data-dir="$USER_DATA_DIR" .
     '';
 
   cleanArgs = removeAttrs args [
