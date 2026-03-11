@@ -18,6 +18,27 @@
         "type": "github"
       }
     },
+    "nix-shared": {
+      "inputs": {
+        "flake-utils": [
+          "flake-utils"
+        ],
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1773261551,
+        "narHash": "sha256-vqK6J1SmC2UlqrQuRo/4gpYloyYz65Yt/wAqMjuFmUg=",
+        "rev": "203990846b64e59f74f650a3433086f68a9ce0e6",
+        "type": "tarball",
+        "url": "http://gitea.home/api/v1/repos/filebin/nix-shared/archive/203990846b64e59f74f650a3433086f68a9ce0e6.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "http://gitea.home/filebin/nix-shared/archive/main.tar.gz"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1770464364,
@@ -37,6 +58,7 @@
     "root": {
       "inputs": {
         "flake-utils": "flake-utils",
+        "nix-shared": "nix-shared",
         "nixpkgs": "nixpkgs"
       }
     },

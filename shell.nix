@@ -1,30 +1,10 @@
-{ pkgs, nix-lib, ... }:
+{ pkgs, nix-lib, nix-shared, ... }:
+
 with pkgs;
 nix-lib.mkUixVscodeShell {
   uixShellGuid = "56c1d145-77bc-47ef-8eb3-ac0126f158f1";
 
-  vscodeOptions.userSettings = {
-    "nix.enableLanguageServer" = true;
-    "nix.serverPath" = "nixd";
-    "nix.serverSettings" = {
-      nixd = {
-        nixpkgs = {
-          "expr" = "with (import <nixpkgs> { });";
-        };
-        formatting = {
-          "command" = [ "nixfmt" ]; # or nixfmt or nixpkgs-fmt
-        };
-      };
-    };
-    "[nix]" = {
-      "editor.insertSpaces" = true;
-      "editor.tabSize" = 2;
-    };
-    "files.associations" = {
-      "*.uix" = "nix";
-    };
-    "git.autofetch" = true;
-  };
+  vscodeOptions.userSettings = nix-shared.vscode-settings;
 
   vscodeExtensions =
     with vscode-extensions;
