@@ -13,7 +13,6 @@
       let
         pkgs = import nixpkgs {
           inherit system;
-          config.allowUnfree = true;
         };
         nix-lib = (import ./lib) { inherit pkgs; };
       in

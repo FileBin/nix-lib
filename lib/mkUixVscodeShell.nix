@@ -6,6 +6,7 @@
   packages ? [ ],
   vscodeExtensions ? [ ],
   vscodeOptions ? { },
+  vscodeExe ? "${pkgs.vscodium}/bin/codium",
   ...
 }@args:
 let
@@ -13,7 +14,6 @@ let
 
   packagesWrap = packages ++ [
     start-vscode
-    pkgs.vscode
     pkgs.bashInteractive
   ];
 
@@ -81,7 +81,7 @@ let
         dest = userSettingsJSON;
       }}
 
-      TMPDIR="$UIX_TMPDIR" code -n --extensions-dir "${combinedExtensionsDrv}/share/vscode/extensions" --user-data-dir="$USER_DATA_DIR" .
+      TMPDIR="$UIX_TMPDIR" ${vscodeExe} -n --extensions-dir "${combinedExtensionsDrv}/share/vscode/extensions" --user-data-dir="$USER_DATA_DIR" .
     '';
 
   cleanArgs = removeAttrs args [
