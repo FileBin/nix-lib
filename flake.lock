@@ -28,11 +28,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1773261551,
-        "narHash": "sha256-vqK6J1SmC2UlqrQuRo/4gpYloyYz65Yt/wAqMjuFmUg=",
-        "rev": "203990846b64e59f74f650a3433086f68a9ce0e6",
+        "lastModified": 1773261949,
+        "narHash": "sha256-viWRlGCr7GZDz2b73UrjOI6Fo7IWB9rJJFKn0QmR4hg=",
+        "rev": "dacd3d4818fd9491061a17ef64161d288d8a1603",
         "type": "tarball",
-        "url": "http://gitea.home/api/v1/repos/filebin/nix-shared/archive/203990846b64e59f74f650a3433086f68a9ce0e6.tar.gz"
+        "url": "http://gitea.home/api/v1/repos/filebin/nix-shared/archive/dacd3d4818fd9491061a17ef64161d288d8a1603.tar.gz"
       },
       "original": {
         "type": "tarball",
