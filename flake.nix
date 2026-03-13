@@ -20,6 +20,8 @@
           inherit system;
         };
         nix-lib = (import ./lib) { inherit pkgs; };
+        merge-modules = (import ./lib/merge-modules.nix) { inherit pkgs; };
+        list-modules = (import ./lib/list-modules.nix) { inherit pkgs; };
         nix-shared = (import "${inputs.nix-shared}");
       in
       {
@@ -28,6 +30,7 @@
           inherit nix-lib;
           inherit nix-shared;
         };
-      }
+
+      } // (merge-modules (list-modules ./desktop-modules))
     );
 }

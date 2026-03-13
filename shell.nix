@@ -15,6 +15,7 @@ nix-lib.mkUixVscodeShell {
       gruntfuggly.todo-tree
       redhat.vscode-xml
       ms-python.python
+      christian-kohler.path-intellisense
     ]
     ++ vscode-utils.extensionsFromVscodeMarketplace [
       {
