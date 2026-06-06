@@ -3,6 +3,7 @@
   nixpkgs.config.allowUnfree = true;
 
   boot.kernelModules = [ "ntsync" ];
+  boot.kernelParams = [ "split_lock_detect=off" ];
 
   programs.steam = {
     enable = true;
@@ -10,6 +11,7 @@
       gamescope
       gamemode
       mangohud
+      nspr
     ];
   };
 
@@ -23,5 +25,6 @@
     protonup-qt
     mangohud
     unstable.vesktop
+    bottles
   ];
 }

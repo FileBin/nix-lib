@@ -4,9 +4,11 @@
   services.displayManager.sddm.wayland.enable = true;
   services.desktopManager.plasma6.enable = true;
 
+  programs.kdeconnect.enable = true;
+
   environment.sessionVariables.NIXOS_OZONE_WL = "1";
 
-  programs.kdeconnect.enable = true;
+  programs.partition-manager.enable = true;
 
   environment.systemPackages = with pkgs.kdePackages; [
     xdg-desktop-portal-kde
@@ -26,5 +28,6 @@
     sddm-kcm # Configuration module for SDDM
     pkgs.kdiff3 # Compares and merges 2 or 3 files or directories
     isoimagewriter # Optional: Program to write hybrid ISO files onto USB disks
+    kdenlive # video editor
   ];
 }

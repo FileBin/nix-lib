@@ -1,3 +1,5 @@
+# Moldule that writes script to run one wrapper to run game on dediacted GPU on multi-GPU systems
+# gaming-gpu-run - script for running game on dedicated gpu
 {
   pkgs,
   lib,

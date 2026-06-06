@@ -1,3 +1,6 @@
+# scipt for getting vscode extensions via command line
+# usage: 
+# vscext author.extensionId
 { pkgs, ... }:
 let
   vscext-script = pkgs.writeScriptBin "vscext" ''

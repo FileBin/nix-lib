@@ -1,7 +1,6 @@
 {
   services.samba = {
     enable = true;
-    securityType = "user";
     openFirewall = true;
     settings = {
       global = {
@@ -24,7 +23,7 @@
         "guest ok" = "yes";
         "create mask" = "0644";
         "directory mask" = "0755";
-        "force user" = "filebin";
+        "force user" = "abobus";
         "force group" = "users";
       };
       # "private" = {
@@ -38,6 +37,11 @@
       #   "force group" = "groupname";
       # };
     };
+  };
+
+  users.users.abobus = {
+    isNormalUser = true;
+    initialPassword = "test123$";
   };
 
   services.samba-wsdd = {

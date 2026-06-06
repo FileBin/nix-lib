@@ -6,5 +6,6 @@
     rocmPackages.rocm-smi
     rocmPackages.rocm-core
   ];
-  useRocm = true;
+
+  nixpkgs.config.rocmSupport = true;
 }

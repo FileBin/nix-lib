@@ -6,7 +6,4 @@
 
   #enable overclocking
   boot.modprobeConfig.enable = true;
-  boot.extraModprobeConfig = ''
-    options amdgpu ppfeaturemask=0xffffffff
-  '';
 }
