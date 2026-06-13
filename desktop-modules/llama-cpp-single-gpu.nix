@@ -8,6 +8,8 @@
     modelsDir = "/srv/models";
 
     extraFlags = [
+      "-c"
+      "0"
       "--parallel"
       "1"
       "--flash-attn"
