@@ -20,41 +20,59 @@ let
   };
 
   systemConfig = nixpkgs.lib.nixosSystem {
-    inherit (pkgs) system;
+    system = pkgs.stdenv.hostPlatform.system;
     modules = [ testConfig ];
   };
+
+  llamaPkg = builtins.head (pkgs.lib.filter (p: p.name == "llama-vulkan-unload") systemConfig.config.environment.systemPackages);
 in
 pkgs.runCommand "llama-vulkan-unload-test"
   {
-    nativeBuildInputs = [ pkgs.jq ];
+    nativeBuildInputs = [ pkgs.jq pkgs.binutils ];
   }
   ''
     TOPOLEVEL="${systemConfig.config.system.build.toplevel}"
     LLAMA_GAME="${systemConfig.config.services.llama-vulkan-unload.package}"
+    LLAMA_PKG="${llamaPkg}"
 
-    # 1. Verify the Vulkan layer manifest exists in the toplevel
-    test -f "$TOPOLEVEL/etc/vulkan/implicit_layer.d/VkLayer_llama_unload.json" \
-      || test -f "$TOPOLEVEL/usr/share/vulkan/implicit_layer.d/VkLayer_llama_unload.json"
+    echo "=== Checking llama-vulkan-unload package ==="
 
-    # 2. Find the manifest file
-    if [ -f "$TOPOLEVEL/etc/vulkan/implicit_layer.d/VkLayer_llama_unload.json" ]; then
-      MANIFEST="$TOPOLEVEL/etc/vulkan/implicit_layer.d/VkLayer_llama_unload.json"
-    else
-      MANIFEST="$TOPOLEVEL/usr/share/vulkan/implicit_layer.d/VkLayer_llama_unload.json"
-    fi
+    # 1. Verify the layer .so exists
+    test -f "$LLAMA_PKG/lib/libVkLayer_llama_unload.so"
+    echo "  [PASS] libVkLayer_llama_unload.so exists"
+
+    # 2. Verify the Vulkan layer manifest exists and is valid JSON
+    MANIFEST="$LLAMA_PKG/share/vulkan/implicit_layer.d/VkLayer_llama_unload.json"
+    test -f "$MANIFEST"
+    echo "  [PASS] Manifest exists"
 
     # 3. Verify the manifest contains the correct layer name
     grep -q "VK_LAYER_llama_unload" "$MANIFEST"
+    echo "  [PASS] Layer name correct"
 
     # 4. Verify the layer .so library path referenced in manifest exists
     LIB_PATH=$(cat "$MANIFEST" | jq -r '.layer.library_path')
     test -f "$LIB_PATH"
+    echo "  [PASS] Library path in manifest exists: $LIB_PATH"
 
-    # 5. Verify llama-cpp service is configured
-    test -f "$TOPOLEVEL/etc/systemd/system/llama-cpp.service"
+    # 5. Verify required Vulkan layer symbols are exported
+    for sym in vkNegotiateLoaderLayerInterfaceVersion vkGetInstanceProcAddr vkGetDeviceProcAddr vk_layerGetPhysicalDeviceProcAddr; do
+      nm -D "$LLAMA_PKG/lib/libVkLayer_llama_unload.so" | grep -q "$sym"
+    done
+    echo "  [PASS] Required Vulkan layer symbols exported"
 
-    # 6. Verify llama-game wrapper derivation exists
+    # 6. Verify curl symbols are linked (libcurl integration)
+    nm -D "$LLAMA_PKG/lib/libVkLayer_llama_unload.so" | grep -q "curl_easy_init"
+    echo "  [PASS] libcurl symbols linked"
+
+    # 7. Verify llama-game wrapper derivation exists
     test -f "$LLAMA_GAME/bin/llama-game"
+    echo "  [PASS] llama-game wrapper exists"
 
+    # 8. Verify llama-cpp service is configured in toplevel
+    test -f "$TOPOLEVEL/etc/systemd/system/llama-cpp.service"
+    echo "  [PASS] llama-cpp.service exists in toplevel"
+
+    echo "=== All checks passed ==="
     touch $out
   ''

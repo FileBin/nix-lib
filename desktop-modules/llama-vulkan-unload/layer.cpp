@@ -17,6 +17,13 @@
 #include <cstdio>
 #include <cstring>
 #include <unistd.h>
+#include <string>
+#include <vector>
+
+#include <nlohmann/json.hpp>
+#include <curl/curl.h>
+
+using json = nlohmann::json;
 
 /* VK_LAYER_EXPORT — the Vulkan loader headers define this, but we
    include vulkan-headers which doesn't. Define it ourselves. */
@@ -33,6 +40,65 @@
 #endif
 
 /* ------------------------------------------------------------------ */
+/*  Status file — allows external processes to observe unload progress */
+/* ------------------------------------------------------------------ */
+static void write_status(const std::string &msg)
+{
+  FILE *f = fopen("/tmp/llama_unload_status", "w");
+  if (f)
+  {
+    fputs(msg.c_str(), f);
+    fclose(f);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  HTTP helpers via libcurl                                         */
+/* ------------------------------------------------------------------ */
+static std::string http_get(const char *url)
+{
+  CURL *curl = curl_easy_init();
+  if (!curl)
+    return "";
+
+  std::string response;
+  curl_easy_setopt(curl, CURLOPT_URL, url);
+  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,
+                   +[](char *ptr, size_t size, size_t nmemb, void *data) {
+                     std::string *str = static_cast<std::string *>(data);
+                     str->append(ptr, size * nmemb);
+                     return size * nmemb;
+                   });
+  curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+  curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
+
+  curl_easy_perform(curl);
+  curl_easy_cleanup(curl);
+  return response;
+}
+
+static bool http_post(const char *url, const char *body)
+{
+  CURL *curl = curl_easy_init();
+  if (!curl)
+    return false;
+
+  long http_code = 0;
+  curl_easy_setopt(curl, CURLOPT_URL, url);
+  curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
+  curl_easy_setopt(curl, CURLOPT_POST, 1L);
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
+  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,
+                   +[](char *, size_t, size_t, void *) { return 0; });
+
+  curl_easy_perform(curl);
+  curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+  curl_easy_cleanup(curl);
+  return http_code >= 200 && http_code < 300;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Unload all models from llama.cpp via its REST API                  */
 /* ------------------------------------------------------------------ */
 static void unload_llama_models(void)
@@ -41,33 +107,105 @@ static void unload_llama_models(void)
   if (!apiBase)
     apiBase = LLAMA_API_BASE;
 
-  /*
-   * Fetch loaded model IDs, then POST /models/unload for each.
-   * Fork so the Vulkan call isn't blocked waiting for curl.
-   */
-  char cmd[1024];
-  snprintf(cmd, sizeof(cmd),
-           "curl -s '%s/v1/models' 2>/dev/null | "
-           "jq -r '.data[] | select(.status.value == \"loaded\") | .id' 2>/dev/null | "
-           "while IFS= read -r model; do "
-           "  curl -s -X POST '%s/models/unload' "
-           "    -H 'Content-Type: application/json' "
-           "    -d \"{\\\"model\\\": \\\"$model\\\"}\" >/dev/null 2>&1; "
-           "done",
-           apiBase, apiBase);
+  /* Write pending status */
+  write_status("pending");
 
-  if (fork() == 0)
+  /* Build URL for fetching models */
+  std::string url = std::string(apiBase) + "/v1/models";
+
+  /* Fetch model list */
+  std::string response = http_get(url.c_str());
+  if (response.empty())
   {
-    execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
-    _exit(1);
+    write_status("error:failed_to_fetch_models");
+    return;
+  }
+
+  /* Parse JSON response */
+  json models;
+  try
+  {
+    models = json::parse(response);
+  }
+  catch (const json::parse_error &e)
+  {
+    write_status("error:json_parse_failed");
+    return;
+  }
+
+  /* Collect loaded model IDs */
+  std::vector<std::string> loadedModels;
+
+  if (models.contains("data") && models["data"].is_array())
+  {
+    for (auto &entry : models["data"])
+    {
+      if (entry.contains("id") && entry.contains("status"))
+      {
+        std::string id = entry["id"].get<std::string>();
+        bool loaded = false;
+
+        if (entry["status"].contains("value"))
+        {
+          loaded = entry["status"]["value"].get<std::string>() == "loaded";
+        }
+        else if (entry["status"].is_boolean())
+        {
+          loaded = entry["status"].get<bool>();
+        }
+
+        if (loaded)
+        {
+          loadedModels.push_back(id);
+        }
+      }
+    }
+  }
+
+  if (loadedModels.empty())
+  {
+    write_status("unloaded:none");
+    return;
+  }
+
+  /* Unload each model */
+  std::string unloadUrl = std::string(apiBase) + "/models/unload";
+  bool allOk = true;
+  std::string unloadedList;
+
+  for (size_t i = 0; i < loadedModels.size(); i++)
+  {
+    json payload;
+    payload["model"] = loadedModels[i];
+
+    std::string body = payload.dump();
+    bool ok = http_post(unloadUrl.c_str(), body.c_str());
+
+    if (!ok)
+    {
+      allOk = false;
+    }
+
+    if (i > 0)
+    {
+      unloadedList += ",";
+    }
+    unloadedList += loadedModels[i];
+  }
+
+  if (allOk)
+  {
+    write_status("unloaded:" + unloadedList);
+  }
+  else
+  {
+    write_status("error:unload_failed:" + unloadedList);
   }
 }
 
 /* ------------------------------------------------------------------ */
 /*  vkNegotiateLoaderLayerInterfaceVersion                             */
 /* ------------------------------------------------------------------ */
-/* We need the struct definition from vk_layer.h which isn't in
-   vulkan-headers. Define it ourselves — it's a simple struct. */
 #define LAYER_NEGOTIATE_INTERFACE_STRUCT 0
 
 typedef struct VkNegotiateLayerInterface VkNegotiateLayerInterface;
@@ -103,7 +241,6 @@ static VkResult VKAPI_CALL llama_unload_NegotiateLoaderLayerInterfaceVersion(
 /* ------------------------------------------------------------------ */
 /*  vkCreateInstance                                                   */
 /* ------------------------------------------------------------------ */
-/* We need VkLayerInstanceCreateInfo from vk_layer.h. Define it ourselves. */
 typedef struct VkLayerInstanceCreateInfo VkLayerInstanceCreateInfo;
 enum VkLayerFunction
 {
@@ -165,10 +302,19 @@ static VkResult VKAPI_CALL llama_unload_CreateInstance(
   chainInfo->u.pLayerInfo = chainInfo->u.pLayerInfo->pNextLayer;
 
   /* Unload llama.cpp models BEFORE creating the Vulkan instance,
-     so VRAM is freed before the game allocates resources */
-  unload_llama_models();
+     so VRAM is freed before the game allocates resources.
+     This is done asynchronously — the child writes status to
+     /tmp/llama_unload_status for external observation. */
+  if (fork() == 0)
+  {
+    /* Child — perform the unload */
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+    unload_llama_models();
+    curl_global_cleanup();
+    _exit(0);
+  }
 
-  /* Call the next layer to create the instance */
+  /* Parent — continue creating the Vulkan instance */
   return pfnNextCreateInstance(pCreateInfo, pAllocator, pInstance);
 }
 
@@ -246,8 +392,7 @@ vkGetDeviceProcAddr(VkDevice device, const char *pName)
 
 VK_LAYER_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
 vk_layerGetPhysicalDeviceProcAddr(VkInstance instance,
-                                   VkPhysicalDevice physicalDevice,
-                                   const char *pName)
+                                   VkPhysicalDevice physicalDevice, const char *pName)
 {
   return llama_unload_GetPhysicalDeviceProcAddr(instance, physicalDevice,
                                                 pName);
