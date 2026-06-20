@@ -346,11 +346,11 @@ static VkResult VKAPI_CALL llama_unload_CreateInstance(
      This is done asynchronously — the child writes status to
      /tmp/llama_unload_status for external observation.
      Use double-fork so the grandchild is fully detached from the
-     parent process group and doesn't inherit Vulkan loader locks. */
-  layer_log("calling curl_global_init (before fork)\n");
-  curl_global_init(CURL_GLOBAL_DEFAULT);
-  layer_log("curl_global_init done\n");
-
+     parent process group and doesn't inherit Vulkan loader locks.
+     Do NOT call curl_global_init() here — we're inside the Vulkan
+     loader's vkCreateInstance chain and the loader may hold internal
+     locks that would conflict with curl's TLS initialization.
+     curl_easy_init() handles lazy initialization on its own. */
   layer_log("first fork...\n");
   pid_t child = fork();
   int forkErrno = errno;
