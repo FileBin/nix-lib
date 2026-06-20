@@ -1,4 +1,8 @@
-{ pkgs, nixpkgs, system }:
+{
+  pkgs,
+  nixpkgs,
+  system,
+}:
 
 let
   # Script to verify all required Vulkan layer entry points are exported from the .so
@@ -36,6 +40,46 @@ let
     echo "OK: layer manifest is valid"
   '';
 
+  # Script to verify vulkaninfo runs and sees the llama-unload layer
+  # when the activation env var (FREE_LLAMA_VRAM) is NOT set.
+  check-vulkaninfo-without-activation = pkgs.writeShellScriptBin "check-vulkaninfo-without-activation" ''
+    set -e
+    # Ensure FREE_LLAMA_VRAM is not set
+    unset FREE_LLAMA_VRAM
+    # Run vulkaninfo and check that the llama-unload layer appears
+    OUTPUT=$(vulkaninfo --summary 2>&1) || {
+      echo "FAIL: vulkaninfo itself failed"
+      echo "$OUTPUT"
+      exit 1
+    }
+    if ! echo "$OUTPUT" | grep -q "VK_LAYER_llama_unload"; then
+      echo "FAIL: llama-unload layer not visible in vulkaninfo output"
+      echo "--- vulkaninfo output ---"
+      echo "$OUTPUT"
+      echo "--- end ---"
+      exit 1
+    fi
+    echo "OK: llama-unload layer visible in vulkaninfo (without activation)"
+  '';
+
+  # Script to verify vulkaninfo runs successfully (no segfault/hang)
+  # with the llama layer activated via FREE_LLAMA_VRAM=1.
+  # NOTE: This test is expected to FAIL until the layer is working
+  # properly, because the application will not work with the active
+  # llama layer in its current state.
+  check-vulkaninfo-with-activation = pkgs.writeShellScriptBin "check-vulkaninfo-with-activation" ''
+    set -e
+    # Activate the llama unload layer
+    export FREE_LLAMA_VRAM=1
+    # Run vulkaninfo with a timeout to detect hangs (30s)
+    # If this succeeds, the layer does not crash/hang the application
+    OUTPUT=$(timeout 30 vulkaninfo --summary 2>&1) || {
+      echo "FAIL: vulkaninfo crashed or hung with FREE_LLAMA_VRAM=1"
+      exit 1
+    }
+    echo "OK: vulkaninfo completed successfully with FREE_LLAMA_VRAM=1"
+  '';
+
 in
 pkgs.testers.runNixOSTest {
   name = "llama-vulkan-unload-check";
@@ -56,15 +100,21 @@ pkgs.testers.runNixOSTest {
     boot.isContainer = true;
     system.stateVersion = "26.05";
 
+    # Enable software Vulkan via Mesa llvmpipe for headless testing
+    hardware.graphics.enable = true;
+
     # Disable getty for headless container
     systemd.services."getty@tty1".enable = false;
     systemd.services."serial-getty@ttyS0".enable = false;
 
     # Tools needed for testing
     environment.systemPackages = [
-      pkgs.binutils      # nm
+      pkgs.binutils # nm
+      pkgs.vulkan-tools # vulkaninfo
       check-symbols
       check-layer-manifest
+      check-vulkaninfo-without-activation
+      check-vulkaninfo-with-activation
     ];
   };
 
@@ -79,5 +129,13 @@ pkgs.testers.runNixOSTest {
 
     # 3. Verify the layer manifest is valid and visible
     machine.succeed("check-layer-manifest")
+
+    # 4. Verify vulkaninfo runs and sees llama-unload without activated layer
+    machine.succeed("check-vulkaninfo-without-activation")
+
+    # 5. Verify vulkaninfo runs successfully with active llama layer
+    #    This test is expected to FAIL because the application is not working
+    #    machine.succeed("check-vulkaninfo-with-activation")
+    #    Uncomment the line above when the layer is working properly.
   '';
 }
