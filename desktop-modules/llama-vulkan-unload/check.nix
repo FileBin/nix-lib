@@ -24,11 +24,18 @@ let
     modules = [ testConfig ];
   };
 
-  llamaPkg = builtins.head (pkgs.lib.filter (p: p.name == "llama-vulkan-unload") systemConfig.config.environment.systemPackages);
+  llamaPkg = builtins.head (
+    pkgs.lib.filter (p: p.name == "llama-vulkan-unload") systemConfig.config.environment.systemPackages
+  );
 in
 pkgs.runCommand "llama-vulkan-unload-test"
   {
-    nativeBuildInputs = [ pkgs.jq pkgs.binutils ];
+    nativeBuildInputs = [
+      pkgs.jq
+      pkgs.binutils
+      pkgs.vulkan-tools # vulkaninfo
+      pkgs.mesa.drivers
+    ];
   }
   ''
     TOPOLEVEL="${systemConfig.config.system.build.toplevel}"
@@ -72,6 +79,45 @@ pkgs.runCommand "llama-vulkan-unload-test"
     # 8. Verify llama-cpp service is configured in toplevel
     test -f "$TOPOLEVEL/etc/systemd/system/llama-cpp.service"
     echo "  [PASS] llama-cpp.service exists in toplevel"
+
+    # 9. Verify vulkaninfo runs without hanging or segfaulting
+    #    Run with a 15-second timeout; capture both stdout and stderr.
+    #    A successful run exits 0 and produces output; timeout>0 means hang,
+    #    signal 11 means segfault, any other non-zero exit is a failure.
+    VULKAN_INFO_OUTPUT=$(timeout 15s vulkaninfo --summary 2>&1) || {
+      VULKAN_INFO_EXIT=$?
+      if [ "$VULKAN_INFO_EXIT" -eq 124 ]; then
+        echo "  [FAIL] vulkaninfo timed out after 15s (hang detected)"
+      elif [ "$VULKAN_INFO_EXIT" -eq 139 ]; then
+        echo "  [FAIL] vulkaninfo segfaulted (exit code 139 = 128+11)"
+      else
+        echo "  [FAIL] vulkaninfo exited with code $VULKAN_INFO_EXIT"
+      fi
+      echo "  Output: $VULKAN_INFO_OUTPUT" >&2
+      exit 1
+    }
+    echo "  [PASS] vulkaninfo runs successfully (no hang, no segfault)"
+
+    # 10. Verify vulkaninfo runs with the llama-unload layer loaded
+    #      Set FREE_LLAMA_VRAM=1 to enable the layer and VK_LAYER_PATH so
+    #      the loader finds the manifest in the build sandbox.
+    VULKAN_LAYER_OUTPUT=$(
+      FREE_LLAMA_VRAM=1 \
+      VK_LAYER_PATH="$LLAMA_PKG/share/vulkan/" \
+      timeout 15s vulkaninfo --summary >/dev/null 2>&1
+    ) || {
+      VULKAN_LAYER_EXIT=$?
+      if [ "$VULKAN_LAYER_EXIT" -eq 124 ]; then
+        echo "  [FAIL] vulkaninfo with llama-unload layer timed out after 15s (hang detected)"
+      elif [ "$VULKAN_LAYER_EXIT" -eq 139 ]; then
+        echo "  [FAIL] vulkaninfo with llama-unload layer segfaulted (exit code 139 = 128+11)"
+      else
+        echo "  [FAIL] vulkaninfo with llama-unload layer exited with code $VULKAN_LAYER_EXIT"
+      fi
+      echo "  Output: $VULKAN_LAYER_OUTPUT" >&2
+      exit 1
+    }
+    echo "  [PASS] vulkaninfo runs with llama-unload layer loaded (no hang, no segfault)"
 
     echo "=== All checks passed ==="
     touch $out
