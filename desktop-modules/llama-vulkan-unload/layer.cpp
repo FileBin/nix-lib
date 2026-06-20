@@ -429,7 +429,10 @@ llama_unload_GetPhysicalDeviceProcAddr(
 
 /* ------------------------------------------------------------------ */
 /*  Entry points — called by the Vulkan loader                         */
+/*  Must be extern "C" so the dynamic linker can find them by name.    */
 /* ------------------------------------------------------------------ */
+extern "C" {
+
 VK_LAYER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL
 vkNegotiateLoaderLayerInterfaceVersion(VkNegotiateLayerInterface *pVersionStruct)
 {
@@ -455,3 +458,5 @@ vk_layerGetPhysicalDeviceProcAddr(VkInstance instance,
   return llama_unload_GetPhysicalDeviceProcAddr(instance, physicalDevice,
                                                 pName);
 }
+
+} // extern "C"
