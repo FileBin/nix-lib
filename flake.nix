@@ -2,7 +2,7 @@
   description = "default vscode flake";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
     flake-utils.url = "github:numtide/flake-utils";
     nix-shared = {
       url = "http://gitea.home/filebin/nix-shared/archive/main.tar.gz";
