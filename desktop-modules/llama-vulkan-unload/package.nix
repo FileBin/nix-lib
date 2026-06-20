@@ -21,8 +21,9 @@ pkgs.stdenv.mkDerivation {
 
   buildPhase = ''
     cp ${layerSrc} layer.cpp
-    g++ -O2 -fPIC -shared -o libVkLayer_llama_unload.so \
+    g++ -O0 -g -fPIC -shared -o libVkLayer_llama_unload.so \
       -DLLAMA_API_BASE="\"${llama-apiBase}\"" \
+      -rdynamic \
       layer.cpp \
       -lvulkan -lcurl
   '';

@@ -13,9 +13,12 @@
 
 #define VK_NO_PROTOTYPES
 #include <vulkan/vulkan.h>
+#include <cerrno>
+#include <cstdarg>
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <unistd.h>
 #include <string>
 #include <vector>
@@ -24,6 +27,23 @@
 #include <curl/curl.h>
 
 using json = nlohmann::json;
+
+/* ------------------------------------------------------------------ */
+/*  Debug logging — writes timestamped messages to a log file          */
+/* ------------------------------------------------------------------ */
+static void layer_log(const char *fmt, ...)
+{
+  FILE *f = fopen("/tmp/llama_layer_debug.log", "a");
+  if (!f) return;
+  time_t now = time(NULL);
+  fprintf(f, "[%s] [pid %ld] ",
+          ctime(&now), (long)getpid());
+  va_list ap;
+  va_start(ap, fmt);
+  vfprintf(f, fmt, ap);
+  va_end(ap);
+  fclose(f);
+}
 
 /* VK_LAYER_EXPORT — the Vulkan loader headers define this, but we
    include vulkan-headers which doesn't. Define it ourselves. */
@@ -44,6 +64,7 @@ using json = nlohmann::json;
 /* ------------------------------------------------------------------ */
 static void write_status(const std::string &msg)
 {
+  layer_log("write_status: %s\n", msg.c_str());
   FILE *f = fopen("/tmp/llama_unload_status", "w");
   if (f)
   {
@@ -57,9 +78,13 @@ static void write_status(const std::string &msg)
 /* ------------------------------------------------------------------ */
 static std::string http_get(const char *url)
 {
+  layer_log("http_get: requesting %s\n", url);
   CURL *curl = curl_easy_init();
   if (!curl)
+  {
+    layer_log("http_get: curl_easy_init failed\n");
     return "";
+  }
 
   std::string response;
   curl_easy_setopt(curl, CURLOPT_URL, url);
@@ -73,16 +98,25 @@ static std::string http_get(const char *url)
   curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
   curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
 
-  curl_easy_perform(curl);
+  layer_log("http_get: calling curl_easy_perform (may block up to 5s)\n");
+  CURLcode res = curl_easy_perform(curl);
+  long http_code = 0;
+  curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+  layer_log("http_get: curl_easy_perform returned %d (HTTP %ld), response length=%zu\n",
+            res, http_code, response.length());
   curl_easy_cleanup(curl);
   return response;
 }
 
 static bool http_post(const char *url, const char *body)
 {
+  layer_log("http_post: requesting %s\n", url);
   CURL *curl = curl_easy_init();
   if (!curl)
+  {
+    layer_log("http_post: curl_easy_init failed\n");
     return false;
+  }
 
   long http_code = 0;
   curl_easy_setopt(curl, CURLOPT_URL, url);
@@ -92,8 +126,10 @@ static bool http_post(const char *url, const char *body)
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,
                    +[](char *, size_t, size_t, void *) { return 0; });
 
-  curl_easy_perform(curl);
+  layer_log("http_post: calling curl_easy_perform (may block up to 5s)\n");
+  CURLcode res = curl_easy_perform(curl);
   curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+  layer_log("http_post: curl_easy_perform returned %d (HTTP %ld)\n", res, http_code);
   curl_easy_cleanup(curl);
   return http_code >= 200 && http_code < 300;
 }
@@ -270,6 +306,8 @@ static VkResult VKAPI_CALL llama_unload_CreateInstance(
     const VkAllocationCallbacks *pAllocator,
     VkInstance *pInstance)
 {
+  layer_log(">>> vkCreateInstance entered\n");
+
   /* Walk the pNext chain to find the loader link info */
   VkLayerInstanceCreateInfo *chainInfo =
       (VkLayerInstanceCreateInfo *)pCreateInfo->pNext;
@@ -284,6 +322,7 @@ static VkResult VKAPI_CALL llama_unload_CreateInstance(
 
   if (!chainInfo)
   {
+    layer_log("<<< vkCreateInstance: no chainInfo, returning VK_ERROR_INITIALIZATION_FAILED\n");
     return VK_ERROR_INITIALIZATION_FAILED;
   }
 
@@ -295,6 +334,7 @@ static VkResult VKAPI_CALL llama_unload_CreateInstance(
 
   if (!pfnNextCreateInstance)
   {
+    layer_log("<<< vkCreateInstance: no pfnNextCreateInstance, returning VK_ERROR_INITIALIZATION_FAILED\n");
     return VK_ERROR_INITIALIZATION_FAILED;
   }
 
@@ -305,17 +345,35 @@ static VkResult VKAPI_CALL llama_unload_CreateInstance(
      so VRAM is freed before the game allocates resources.
      This is done asynchronously — the child writes status to
      /tmp/llama_unload_status for external observation. */
-  if (fork() == 0)
+  layer_log("calling fork()...\n");
+  pid_t child = fork();
+  int forkErrno = errno;
+  layer_log("fork() returned %d (errno=%d %s)\n",
+            child, forkErrno, strerror(forkErrno));
+
+  if (child == 0)
   {
     /* Child — perform the unload */
+    layer_log("child: calling curl_global_init\n");
     curl_global_init(CURL_GLOBAL_DEFAULT);
+    layer_log("child: curl_global_init done, calling unload_llama_models\n");
     unload_llama_models();
+    layer_log("child: unload_llama_models done, calling curl_global_cleanup\n");
     curl_global_cleanup();
+    layer_log("child: exiting\n");
     _exit(0);
+  }
+  else if (child == -1)
+  {
+    /* fork failed — log the error but continue */
+    layer_log("WARNING: fork failed (errno=%d), continuing without unloading\n", forkErrno);
   }
 
   /* Parent — continue creating the Vulkan instance */
-  return pfnNextCreateInstance(pCreateInfo, pAllocator, pInstance);
+  layer_log("parent: calling pfnNextCreateInstance\n");
+  VkResult result = pfnNextCreateInstance(pCreateInfo, pAllocator, pInstance);
+  layer_log("<<< vkCreateInstance returned %d\n", result);
+  return result;
 }
 
 /* ------------------------------------------------------------------ */
