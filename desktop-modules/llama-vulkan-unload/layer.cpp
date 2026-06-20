@@ -344,23 +344,41 @@ static VkResult VKAPI_CALL llama_unload_CreateInstance(
   /* Unload llama.cpp models BEFORE creating the Vulkan instance,
      so VRAM is freed before the game allocates resources.
      This is done asynchronously — the child writes status to
-     /tmp/llama_unload_status for external observation. */
-  layer_log("calling fork()...\n");
+     /tmp/llama_unload_status for external observation.
+     Use double-fork so the grandchild is fully detached from the
+     parent process group and doesn't inherit Vulkan loader locks. */
+  layer_log("calling curl_global_init (before fork)\n");
+  curl_global_init(CURL_GLOBAL_DEFAULT);
+  layer_log("curl_global_init done\n");
+
+  layer_log("first fork...\n");
   pid_t child = fork();
   int forkErrno = errno;
-  layer_log("fork() returned %d (errno=%d %s)\n",
+  layer_log("first fork() returned %d (errno=%d %s)\n",
             child, forkErrno, strerror(forkErrno));
 
   if (child == 0)
   {
-    /* Child — perform the unload */
-    layer_log("child: calling curl_global_init\n");
-    curl_global_init(CURL_GLOBAL_DEFAULT);
-    layer_log("child: curl_global_init done, calling unload_llama_models\n");
-    unload_llama_models();
-    layer_log("child: unload_llama_models done, calling curl_global_cleanup\n");
-    curl_global_cleanup();
-    layer_log("child: exiting\n");
+    /* First child — double-fork to detach */
+    layer_log("first child: second fork...\n");
+    pid_t grandchild = fork();
+    int gcErrno = errno;
+    layer_log("first child: second fork() returned %d (errno=%d %s)\n",
+              grandchild, gcErrno, strerror(gcErrno));
+
+    if (grandchild == 0)
+    {
+      /* Grandchild — perform the unload */
+      layer_log("grandchild: calling unload_llama_models\n");
+      unload_llama_models();
+      layer_log("grandchild: exiting\n");
+      _exit(0);
+    }
+
+    /* First child exits immediately — don't call curl_global_cleanup()
+       because the grandchild may still be using it, and we're exiting
+       anyway with _exit which doesn't flush buffers or run atexit. */
+    layer_log("first child: exiting\n");
     _exit(0);
   }
   else if (child == -1)
