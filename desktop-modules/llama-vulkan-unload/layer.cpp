@@ -232,33 +232,6 @@ static void unload_llama_models(void)
 }
 
 /* ------------------------------------------------------------------ */
-/*  Loader interface negotiation                                       */
-/* ------------------------------------------------------------------ */
-#define LAYER_NEGOTIATE_INTERFACE_STRUCT 0
-
-struct VkNegotiateLayerInterface {
-  uint32_t sType;
-  uint32_t loaderLayerInterface;
-  uint32_t layerLayerInterface;
-};
-
-VK_LAYER_EXPORT VkResult VKAPI_CALL
-vkNegotiateLoaderLayerInterfaceVersion(VkNegotiateLayerInterface *pVersionStruct)
-{
-  VkNegotiateLayerInterface versionStruct = {};
-  versionStruct.sType = LAYER_NEGOTIATE_INTERFACE_STRUCT;
-  versionStruct.loaderLayerInterface = LAYER_NEGOTIATE_INTERFACE_STRUCT;
-  versionStruct.layerLayerInterface = LAYER_NEGOTIATE_INTERFACE_STRUCT;
-
-  if (pVersionStruct->loaderLayerInterface >= versionStruct.layerLayerInterface)
-    *pVersionStruct = versionStruct;
-  else
-    pVersionStruct->layerLayerInterface = pVersionStruct->loaderLayerInterface;
-
-  return VK_SUCCESS;
-}
-
-/* ------------------------------------------------------------------ */
 /*  Dispatch table — stored per instance                               */
 /* ------------------------------------------------------------------ */
 typedef struct {
@@ -368,6 +341,35 @@ llama_unload_DestroyInstance(VkInstance instance,
     destroyFunc(instance, pAllocator);
 }
 
+extern "C" {
+
+/* ------------------------------------------------------------------ */
+/*  Loader interface negotiation                                       */
+/* ------------------------------------------------------------------ */
+#define LAYER_NEGOTIATE_INTERFACE_STRUCT 0
+
+struct VkNegotiateLayerInterface {
+  uint32_t sType;
+  uint32_t loaderLayerInterface;
+  uint32_t layerLayerInterface;
+};
+
+VK_LAYER_EXPORT VkResult VKAPI_CALL
+vkNegotiateLoaderLayerInterfaceVersion(VkNegotiateLayerInterface *pVersionStruct)
+{
+  VkNegotiateLayerInterface versionStruct = {};
+  versionStruct.sType = LAYER_NEGOTIATE_INTERFACE_STRUCT;
+  versionStruct.loaderLayerInterface = LAYER_NEGOTIATE_INTERFACE_STRUCT;
+  versionStruct.layerLayerInterface = LAYER_NEGOTIATE_INTERFACE_STRUCT;
+
+  if (pVersionStruct->loaderLayerInterface >= versionStruct.layerLayerInterface)
+    *pVersionStruct = versionStruct;
+  else
+    pVersionStruct->layerLayerInterface = pVersionStruct->loaderLayerInterface;
+
+  return VK_SUCCESS;
+}
+
 /* ------------------------------------------------------------------ */
 /*  vkGetInstanceProcAddr                                              */
 /* ------------------------------------------------------------------ */
@@ -420,4 +422,6 @@ vk_layerGetPhysicalDeviceProcAddr(VkInstance instance,
   (void)physicalDevice;
   (void)pName;
   return NULL;
+}
+
 }
