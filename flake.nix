@@ -13,23 +13,7 @@
 
   outputs =
     { nixpkgs, flake-utils, ... }@inputs:
-    let
-      system = "x86_64-linux";
-    in
-    {
-      nixosConfigurations = {
-        llama-vulkan-test = nixpkgs.lib.nixosSystem {
-          inherit system;
-          specialArgs = {
-            inherit inputs system;
-          };
-          modules = [
-            ./integration-tests/llama-vulkan-unload
-          ];
-        };
-      };
-    }
-    // flake-utils.lib.eachDefaultSystem (
+    flake-utils.lib.eachDefaultSystem (
       system:
       let
         pkgs = import nixpkgs {
