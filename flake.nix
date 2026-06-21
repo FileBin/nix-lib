@@ -48,7 +48,7 @@
         };
 
         checks.llama-vulkan-unload = (import ./desktop-modules/llama-vulkan-unload/check.nix) {
-          inherit pkgs nixpkgs system;
+          inherit pkgs;
         };
 
       } // (merge-modules (list-modules ./desktop-modules))

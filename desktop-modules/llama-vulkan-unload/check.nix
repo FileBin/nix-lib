@@ -1,7 +1,5 @@
 {
   pkgs,
-  nixpkgs,
-  system,
 }:
 
 let
@@ -71,10 +69,24 @@ let
     set -e
     # Activate the llama unload layer
     export FREE_LLAMA_VRAM=1
+    # Enable Vulkan loader debug output
+    export VK_LOADER_DEBUG=all
+    # Clear previous debug log
+    rm -f /tmp/llama_layer_debug.log
     # Run vulkaninfo with a timeout to detect hangs (30s)
     # If this succeeds, the layer does not crash/hang the application
     OUTPUT=$(timeout 30 vulkaninfo --summary 2>&1) || {
-      echo "FAIL: vulkaninfo crashed or hung with FREE_LLAMA_VRAM=1"
+      EXIT_CODE=$?
+      echo "FAIL: vulkaninfo crashed or hung with FREE_LLAMA_VRAM=1 (exit code=$EXIT_CODE)"
+      echo "--- vulkaninfo output (last 100 lines) ---"
+      echo "$OUTPUT" | tail -100
+      echo "--- end vulkaninfo output ---"
+      # Print the layer's own debug log if available
+      if [ -f /tmp/llama_layer_debug.log ]; then
+        echo "--- layer debug log (last 100 lines) ---"
+        tail -100 /tmp/llama_layer_debug.log
+        echo "--- end layer debug log ---"
+      fi
       exit 1
     }
     echo "OK: vulkaninfo completed successfully with FREE_LLAMA_VRAM=1"
@@ -134,8 +146,6 @@ pkgs.testers.runNixOSTest {
     machine.succeed("check-vulkaninfo-without-activation")
 
     # 5. Verify vulkaninfo runs successfully with active llama layer
-    #    This test is expected to FAIL because the application is not working
-    #    machine.succeed("check-vulkaninfo-with-activation")
-    #    Uncomment the line above when the layer is working properly.
+    machine.succeed("check-vulkaninfo-with-activation")
   '';
 }

@@ -1,32 +1,38 @@
 /*
- * VkLayer_llama_unload
+ * VkLayer_simple — Minimal no-op Vulkan implicit layer
  *
- * A Vulkan implicit layer that intercepts vkCreateInstance and unloads
- * all loaded llama.cpp models from the GPU before the application starts.
+ * Based on RenderDoc's Vulkan layer guide:
+ * https://renderdoc.org/vulkan-layer-guide.html
  *
- * This allows games and other Vulkan applications to get full GPU VRAM
- * without requiring the user to manually unload models first.
- *
- * Enable:   FREE_LLAMA_VRAM=1
- * Disable:  DISABLE_LLAMA_UNLOAD=1
+ * This layer does NOTHING — it just passes all calls through to the next
+ * layer / ICD. If this works, then the issue is in our layer.cpp logic,
+ * not in the layer infrastructure.
  */
 
 #define VK_NO_PROTOTYPES
 #include <vulkan/vulkan.h>
-#include <cerrno>
-#include <cstdarg>
-#include <cstdlib>
-#include <cstdio>
 #include <cstring>
-#include <ctime>
-#include <unistd.h>
+#include <map>
+#include <mutex>
 #include <string>
 #include <vector>
-
 #include <nlohmann/json.hpp>
 #include <curl/curl.h>
 
 using json = nlohmann::json;
+
+#ifndef VK_LAYER_EXPORT
+#ifdef _WIN32
+#define VK_LAYER_EXPORT __declspec(dllexport)
+#else
+#define VK_LAYER_EXPORT __attribute__((visibility("default")))
+#endif
+#endif
+
+
+#ifndef LLAMA_API_BASE
+#define LLAMA_API_BASE "http://localhost:11433"
+#endif
 
 /* ------------------------------------------------------------------ */
 /*  Debug logging — writes timestamped messages to a log file          */
@@ -36,28 +42,14 @@ static void layer_log(const char *fmt, ...)
   FILE *f = fopen("/tmp/llama_layer_debug.log", "a");
   if (!f) return;
   time_t now = time(NULL);
-  fprintf(f, "[%s] [pid %ld] ",
-          ctime(&now), (long)getpid());
+  fprintf(f, "[%s] ",
+          ctime(&now));
   va_list ap;
   va_start(ap, fmt);
   vfprintf(f, fmt, ap);
   va_end(ap);
   fclose(f);
 }
-
-/* VK_LAYER_EXPORT — the Vulkan loader headers define this, but we
-   include vulkan-headers which doesn't. Define it ourselves. */
-#ifndef VK_LAYER_EXPORT
-#ifdef _WIN32
-#define VK_LAYER_EXPORT __declspec(dllexport)
-#else
-#define VK_LAYER_EXPORT __attribute__((visibility("default")))
-#endif
-#endif
-
-#ifndef LLAMA_API_BASE
-#define LLAMA_API_BASE "http://localhost:11433"
-#endif
 
 /* ------------------------------------------------------------------ */
 /*  Status file — allows external processes to observe unload progress */
@@ -240,193 +232,177 @@ static void unload_llama_models(void)
 }
 
 /* ------------------------------------------------------------------ */
-/*  vkNegotiateLoaderLayerInterfaceVersion                             */
+/*  Loader interface negotiation                                       */
 /* ------------------------------------------------------------------ */
 #define LAYER_NEGOTIATE_INTERFACE_STRUCT 0
 
-typedef struct VkNegotiateLayerInterface VkNegotiateLayerInterface;
-struct VkNegotiateLayerInterface
-{
+struct VkNegotiateLayerInterface {
   uint32_t sType;
   uint32_t loaderLayerInterface;
   uint32_t layerLayerInterface;
 };
 
-static VkResult VKAPI_CALL llama_unload_NegotiateLoaderLayerInterfaceVersion(
-    VkNegotiateLayerInterface *pVersionStruct)
+VK_LAYER_EXPORT VkResult VKAPI_CALL
+vkNegotiateLoaderLayerInterfaceVersion(VkNegotiateLayerInterface *pVersionStruct)
 {
   VkNegotiateLayerInterface versionStruct = {};
   versionStruct.sType = LAYER_NEGOTIATE_INTERFACE_STRUCT;
   versionStruct.loaderLayerInterface = LAYER_NEGOTIATE_INTERFACE_STRUCT;
   versionStruct.layerLayerInterface = LAYER_NEGOTIATE_INTERFACE_STRUCT;
 
-  if (pVersionStruct->loaderLayerInterface >=
-      versionStruct.layerLayerInterface)
-  {
+  if (pVersionStruct->loaderLayerInterface >= versionStruct.layerLayerInterface)
     *pVersionStruct = versionStruct;
-  }
   else
-  {
-    pVersionStruct->layerLayerInterface =
-        pVersionStruct->loaderLayerInterface;
-  }
+    pVersionStruct->layerLayerInterface = pVersionStruct->loaderLayerInterface;
 
   return VK_SUCCESS;
 }
 
 /* ------------------------------------------------------------------ */
+/*  Dispatch table — stored per instance                               */
+/* ------------------------------------------------------------------ */
+typedef struct {
+  PFN_vkGetInstanceProcAddr GetInstanceProcAddr;
+  PFN_vkDestroyInstance     DestroyInstance;
+  PFN_vkEnumerateDeviceExtensionProperties EnumerateDeviceExtensionProperties;
+} DispatchTable;
+
+static std::mutex global_lock;
+static std::map<void *, DispatchTable> instance_dispatch;
+
+static inline void *GetKey(void *handle)
+{
+  /* The loader stores its dispatch table in the first sizeof(void*) bytes
+     of every dispatchable handle. Use that as the map key. */
+  return *(void **)handle;
+}
+
+/* ------------------------------------------------------------------ */
 /*  vkCreateInstance                                                   */
 /* ------------------------------------------------------------------ */
-typedef struct VkLayerInstanceCreateInfo VkLayerInstanceCreateInfo;
-enum VkLayerFunction
-{
-  VK_LAYER_LINK_INFO = 0,
+enum VkLayerFunction { VK_LAYER_LINK_INFO = 0 };
+
+struct VkLayerChain {
+  VkLayerChain                        *pNextLayer;
+  PFN_vkGetInstanceProcAddr           pfnNextGetInstanceProcAddr;
+  PFN_vkGetDeviceProcAddr             pfnNextGetDeviceProcAddr;
 };
 
-typedef struct VkLayerChain
-{
-  VkLayerChain *pNextLayer;
-  PFN_vkGetInstanceProcAddr pfnNextGetInstanceProcAddr;
-  PFN_vkGetDeviceProcAddr pfnNextGetDeviceProcAddr;
-} VkLayerChain;
-
-struct VkLayerInstanceCreateInfo
-{
-  VkStructureType sType;
-  const void *pNext;
-  VkLayerFunction function;
-  union
-  {
-    VkLayerChain *pLayerInfo;
-  } u;
+struct VkLayerInstanceCreateInfo {
+  VkStructureType    sType;
+  const void        *pNext;
+  VkLayerFunction    function;
+  union { VkLayerChain *pLayerInfo; } u;
 };
 
-static VkResult VKAPI_CALL llama_unload_CreateInstance(
-    const VkInstanceCreateInfo *pCreateInfo,
-    const VkAllocationCallbacks *pAllocator,
-    VkInstance *pInstance)
+static VkResult VKAPI_CALL
+llama_unload_CreateInstance(const VkInstanceCreateInfo *pCreateInfo,
+                      const VkAllocationCallbacks *pAllocator,
+                      VkInstance *pInstance)
 {
-  layer_log(">>> vkCreateInstance entered\n");
-
-  /* Walk the pNext chain to find the loader link info */
+  /* Walk pNext chain for loader link info */
   VkLayerInstanceCreateInfo *chainInfo =
       (VkLayerInstanceCreateInfo *)pCreateInfo->pNext;
-
   while (chainInfo &&
-         (chainInfo->sType !=
-              VK_STRUCTURE_TYPE_LOADER_INSTANCE_CREATE_INFO ||
+         (chainInfo->sType != VK_STRUCTURE_TYPE_LOADER_INSTANCE_CREATE_INFO ||
           chainInfo->function != VK_LAYER_LINK_INFO))
-  {
     chainInfo = (VkLayerInstanceCreateInfo *)chainInfo->pNext;
-  }
 
   if (!chainInfo)
-  {
-    layer_log("<<< vkCreateInstance: no chainInfo, returning VK_ERROR_INITIALIZATION_FAILED\n");
     return VK_ERROR_INITIALIZATION_FAILED;
-  }
 
-  PFN_vkGetInstanceProcAddr pfnNextGetInstanceProcAddr =
+  PFN_vkGetInstanceProcAddr gpa =
       chainInfo->u.pLayerInfo->pfnNextGetInstanceProcAddr;
-  PFN_vkCreateInstance pfnNextCreateInstance =
-      (PFN_vkCreateInstance)pfnNextGetInstanceProcAddr(
-          VK_NULL_HANDLE, "vkCreateInstance");
 
-  if (!pfnNextCreateInstance)
-  {
-    layer_log("<<< vkCreateInstance: no pfnNextCreateInstance, returning VK_ERROR_INITIALIZATION_FAILED\n");
-    return VK_ERROR_INITIALIZATION_FAILED;
-  }
-
-  /* Advance the chain for the next layer */
+  /* Advance chain for next layer */
   chainInfo->u.pLayerInfo = chainInfo->u.pLayerInfo->pNextLayer;
 
-  /* Unload llama.cpp models BEFORE creating the Vulkan instance,
-     so VRAM is freed before the game allocates resources.
-     This is done asynchronously — the child writes status to
-     /tmp/llama_unload_status for external observation.
-     Use double-fork so the grandchild is fully detached from the
-     parent process group and doesn't inherit Vulkan loader locks.
-     Do NOT call curl_global_init() here — we're inside the Vulkan
-     loader's vkCreateInstance chain and the loader may hold internal
-     locks that would conflict with curl's TLS initialization.
-     curl_easy_init() handles lazy initialization on its own. */
-  layer_log("first fork...\n");
-  pid_t child = fork();
-  int forkErrno = errno;
-  layer_log("first fork() returned %d (errno=%d %s)\n",
-            child, forkErrno, strerror(forkErrno));
+  PFN_vkCreateInstance createFunc =
+      (PFN_vkCreateInstance)gpa(VK_NULL_HANDLE, "vkCreateInstance");
 
-  if (child == 0)
+  VkResult result = createFunc(pCreateInfo, pAllocator, pInstance);
+  if (result != VK_SUCCESS)
+    return result;
+
+  /* Build dispatch table for the next layer */
+  DispatchTable table;
+  table.GetInstanceProcAddr =
+      (PFN_vkGetInstanceProcAddr)gpa(*pInstance, "vkGetInstanceProcAddr");
+  table.DestroyInstance =
+      (PFN_vkDestroyInstance)gpa(*pInstance, "vkDestroyInstance");
+  table.EnumerateDeviceExtensionProperties =
+      (PFN_vkEnumerateDeviceExtensionProperties)
+          gpa(*pInstance, "vkEnumerateDeviceExtensionProperties");
+
   {
-    /* First child — double-fork to detach */
-    layer_log("first child: second fork...\n");
-    pid_t grandchild = fork();
-    int gcErrno = errno;
-    layer_log("first child: second fork() returned %d (errno=%d %s)\n",
-              grandchild, gcErrno, strerror(gcErrno));
-
-    if (grandchild == 0)
-    {
-      /* Grandchild — perform the unload */
-      layer_log("grandchild: calling unload_llama_models\n");
-      unload_llama_models();
-      layer_log("grandchild: exiting\n");
-      _exit(0);
-    }
-
-    /* First child exits immediately — don't call curl_global_cleanup()
-       because the grandchild may still be using it, and we're exiting
-       anyway with _exit which doesn't flush buffers or run atexit. */
-    layer_log("first child: exiting\n");
-    _exit(0);
-  }
-  else if (child == -1)
-  {
-    /* fork failed — log the error but continue */
-    layer_log("WARNING: fork failed (errno=%d), continuing without unloading\n", forkErrno);
+    std::lock_guard<std::mutex> lock(global_lock);
+    instance_dispatch[GetKey(*pInstance)] = table;
   }
 
-  /* Parent — continue creating the Vulkan instance */
-  layer_log("parent: calling pfnNextCreateInstance\n");
-  VkResult result = pfnNextCreateInstance(pCreateInfo, pAllocator, pInstance);
-  layer_log("<<< vkCreateInstance returned %d\n", result);
+  layer_log("grandchild: calling unload_llama_models\n");
+  unload_llama_models();
+
   return result;
+}
+
+/* ------------------------------------------------------------------ */
+/*  vkDestroyInstance                                                  */
+/* ------------------------------------------------------------------ */
+static void VKAPI_CALL
+llama_unload_DestroyInstance(VkInstance instance,
+                       const VkAllocationCallbacks *pAllocator)
+{
+  /* Get dispatch table before removing it */
+  PFN_vkDestroyInstance destroyFunc = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(global_lock);
+    auto it = instance_dispatch.find(GetKey(instance));
+    if (it != instance_dispatch.end())
+    {
+      destroyFunc = it->second.DestroyInstance;
+      instance_dispatch.erase(it);
+    }
+  }
+
+  if (destroyFunc)
+    destroyFunc(instance, pAllocator);
 }
 
 /* ------------------------------------------------------------------ */
 /*  vkGetInstanceProcAddr                                              */
 /* ------------------------------------------------------------------ */
-static PFN_vkVoidFunction VKAPI_CALL llama_unload_GetInstanceProcAddr(
-    VkInstance instance, const char *pName)
+VK_LAYER_EXPORT PFN_vkVoidFunction VKAPI_CALL
+vkGetInstanceProcAddr(VkInstance instance, const char *pName)
 {
-  if (!instance)
-  {
-    /* Instance-less functions — we only intercept vkCreateInstance */
+  /* Instance-less functions */
+  if (!instance) {
     if (strcmp(pName, "vkCreateInstance") == 0)
-    {
       return (PFN_vkVoidFunction)llama_unload_CreateInstance;
-    }
     return NULL;
   }
 
-  /* Instance-level functions */
+  /* Functions we intercept */
   if (strcmp(pName, "vkGetInstanceProcAddr") == 0)
-  {
-    return (PFN_vkVoidFunction)llama_unload_GetInstanceProcAddr;
-  }
+    return (PFN_vkVoidFunction)vkGetInstanceProcAddr;
+  if (strcmp(pName, "vkDestroyInstance") == 0)
+    return (PFN_vkVoidFunction)llama_unload_DestroyInstance;
 
-  /* For all other functions, return NULL — the loader will dispatch
-     through the chain to the next layer / ICD automatically. */
-  return NULL;
+  /* Forward all other functions through dispatch table */
+  std::lock_guard<std::mutex> lock(global_lock);
+  auto it = instance_dispatch.find(GetKey(instance));
+  if (it == instance_dispatch.end())
+    return NULL;
+  return it->second.GetInstanceProcAddr(instance, pName);
 }
 
 /* ------------------------------------------------------------------ */
 /*  vkGetDeviceProcAddr                                                */
 /* ------------------------------------------------------------------ */
-static PFN_vkVoidFunction VKAPI_CALL llama_unload_GetDeviceProcAddr(
-    VkDevice device, const char *pName)
+VK_LAYER_EXPORT PFN_vkVoidFunction VKAPI_CALL
+vkGetDeviceProcAddr(VkDevice device, const char *pName)
 {
+  /* We don't intercept any device functions — return NULL so the
+     loader falls through to the ICD. */
   (void)device;
   (void)pName;
   return NULL;
@@ -435,46 +411,13 @@ static PFN_vkVoidFunction VKAPI_CALL llama_unload_GetDeviceProcAddr(
 /* ------------------------------------------------------------------ */
 /*  vk_layerGetPhysicalDeviceProcAddr                                  */
 /* ------------------------------------------------------------------ */
-static PFN_vkVoidFunction VKAPI_CALL
-llama_unload_GetPhysicalDeviceProcAddr(
-    VkInstance instance, VkPhysicalDevice physicalDevice, const char *pName)
+VK_LAYER_EXPORT PFN_vkVoidFunction VKAPI_CALL
+vk_layerGetPhysicalDeviceProcAddr(VkInstance instance,
+                                   VkPhysicalDevice physicalDevice,
+                                   const char *pName)
 {
   (void)instance;
   (void)physicalDevice;
   (void)pName;
   return NULL;
 }
-
-/* ------------------------------------------------------------------ */
-/*  Entry points — called by the Vulkan loader                         */
-/*  Must be extern "C" so the dynamic linker can find them by name.    */
-/* ------------------------------------------------------------------ */
-extern "C" {
-
-VK_LAYER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL
-vkNegotiateLoaderLayerInterfaceVersion(VkNegotiateLayerInterface *pVersionStruct)
-{
-  return llama_unload_NegotiateLoaderLayerInterfaceVersion(pVersionStruct);
-}
-
-VK_LAYER_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
-vkGetInstanceProcAddr(VkInstance instance, const char *pName)
-{
-  return llama_unload_GetInstanceProcAddr(instance, pName);
-}
-
-VK_LAYER_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
-vkGetDeviceProcAddr(VkDevice device, const char *pName)
-{
-  return llama_unload_GetDeviceProcAddr(device, pName);
-}
-
-VK_LAYER_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
-vk_layerGetPhysicalDeviceProcAddr(VkInstance instance,
-                                   VkPhysicalDevice physicalDevice, const char *pName)
-{
-  return llama_unload_GetPhysicalDeviceProcAddr(instance, physicalDevice,
-                                                pName);
-}
-
-} // extern "C"
