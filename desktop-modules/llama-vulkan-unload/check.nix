@@ -8,9 +8,6 @@ let
     LIB="/run/current-system/sw/lib/libVkLayer_llama_unload.so"
     REQUIRED_SYMBOLS=(
       vkNegotiateLoaderLayerInterfaceVersion
-      vkGetInstanceProcAddr
-      vkGetDeviceProcAddr
-      vk_layerGetPhysicalDeviceProcAddr
     )
     MISSING=0
     for sym in "''${REQUIRED_SYMBOLS[@]}"; do

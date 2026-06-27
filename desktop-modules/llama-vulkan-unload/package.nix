@@ -5,6 +5,7 @@
 }:
 let
   layerSrc = pkgs.writeText "layer.cpp" (builtins.readFile ./layer.cpp);
+  unloadLlamaSrc = pkgs.writeText "unload-llama.cpp" (builtins.readFile ./unload-llama.cpp);
 in
 pkgs.stdenv.mkDerivation {
   name = "llama-vulkan-unload";
@@ -21,19 +22,10 @@ pkgs.stdenv.mkDerivation {
 
   buildPhase = ''
     cp ${layerSrc} layer.cpp
-    # NOTE: Do NOT link -lvulkan — the layer gets Vulkan symbols through
-    # the loader interface (vkGetInstanceProcAddr), not by linking the
-    # loader runtime. Linking -lvulkan causes the dynamic linker to
-    # confuse our layer .so with libvulkan.so.1 (DT_NEEDED collision).
-    #
-    # NOTE: Do NOT use -rdynamic — it exports all symbols and can cause
-    # DT_NEEDED collisions with libvulkan.so.1, leading to crashes.
-    #
-    # NOTE: Do NOT link -lcurl for the no-op layer — it introduces symbol
-    # conflicts with the ICD's dependencies.
-    g++ -O0 -g -fPIC -shared -o libVkLayer_llama_unload.so \
-      -DLLAMA_API_BASE="\"${llama-apiBase}\"" \
-      layer.cpp
+    cp ${unloadLlamaSrc} unload-llama.cpp
+    g++ -O3 -c layer.cpp 
+    g++ -O3 -c -DLLAMA_API_BASE="\"${llama-apiBase}\"" unload-llama.cpp 
+    g++ layer.o unload-llama.o -fPIC -shared -o libVkLayer_llama_unload.so -lcurl
   '';
 
   installPhase = ''
