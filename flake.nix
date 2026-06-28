@@ -31,6 +31,10 @@
           inherit nix-shared;
         };
 
+        checks.llama-vulkan-unload = (import ./desktop-modules/llama-vulkan-unload/check.nix) {
+          inherit pkgs;
+        };
+
       } // (merge-modules (list-modules ./desktop-modules))
     );
 }
