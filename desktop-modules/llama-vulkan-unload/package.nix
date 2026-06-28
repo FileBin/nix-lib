@@ -3,15 +3,12 @@
   llama-apiBase,
   ...
 }:
-let
-  layerSrc = pkgs.writeText "layer.cpp" (builtins.readFile ./layer.cpp);
-  unloadLlamaSrc = pkgs.writeText "unload-llama.cpp" (builtins.readFile ./unload-llama.cpp);
-in
 pkgs.stdenv.mkDerivation {
   name = "llama-vulkan-unload";
 
-  dontUnpack = true;
   dontConfigure = true;
+
+  src = ./src;
 
   nativeBuildInputs = [ pkgs.gcc pkgs.nlohmann_json ];
   buildInputs = [
@@ -21,8 +18,6 @@ pkgs.stdenv.mkDerivation {
   ];
 
   buildPhase = ''
-    cp ${layerSrc} layer.cpp
-    cp ${unloadLlamaSrc} unload-llama.cpp
     g++ -O3 -c layer.cpp 
     g++ -O3 -c -DLLAMA_API_BASE="\"${llama-apiBase}\"" unload-llama.cpp 
     g++ layer.o unload-llama.o -fPIC -shared -o libVkLayer_llama_unload.so -lcurl
