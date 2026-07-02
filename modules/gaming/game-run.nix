@@ -3,12 +3,11 @@
 {
   pkgs,
   lib,
-  config,
+  moduleConfig,
   ...
 }:
 let
-  cfg = config.game-run;
-
+  cfg = moduleConfig;
   deviceStr = "${cfg.gpu.vendorId}:${cfg.gpu.deviceId}";
 
   gpu-script = pkgs.writeScriptBin "gaming-gpu-run" ''
@@ -32,8 +31,7 @@ let
   '';
 in
 {
-  options.game-run = {
-    enable = lib.mkEnableOption "game run script that will run games on dedicated gpu (for multi-gpu systems)";
+  customOptions = {
     gpu = {
       vendorId = lib.mkOption {
         type = lib.types.str;
@@ -67,15 +65,14 @@ in
     };
   };
 
-  config = lib.mkIf cfg.enable {
-    environment.systemPackages = [
-      gpu-script
-      game-script
-    ];
+  environment.systemPackages = [
+    gpu-script
+    game-script
+  ];
 
-    programs.steam.extraPackages = [
-      gpu-script
-      game-script
-    ];
-  };
+  programs.steam.extraPackages = [
+    gpu-script
+    game-script
+  ];
+  
 }
