@@ -33,6 +33,7 @@ let
 in
 {
   options.game-run = {
+    enable = lib.mkEnableOption "game run script that will run games on dedicated gpu (for multi-gpu systems)";
     gpu = {
       vendorId = lib.mkOption {
         type = lib.types.str;
@@ -66,7 +67,7 @@ in
     };
   };
 
-  config = {
+  config = lib.mkIf cfg.enable {
     environment.systemPackages = [
       gpu-script
       game-script

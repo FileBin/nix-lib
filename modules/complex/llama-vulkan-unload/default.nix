@@ -35,7 +35,7 @@ in
 
       port = lib.mkOption {
         type = lib.types.port;
-        default = 11433;
+        default = config.services.llama-cpp.port;
         description = "Port of the llama.cpp server (must match services.llama-cpp.port)";
       };
 
@@ -47,7 +47,7 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    services.llama-vulkan-unload.package = llama-game;
+    services.llama-vulkan-unload.package = lib.mkDefault llama-game;
 
     /*
       The bundled package installs both the layer library and manifest
