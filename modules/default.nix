@@ -1,7 +1,7 @@
-{ pkgs, ... }:
+{ pkgs, ... }@args:
 let
-  list-modules = (import ../lib/list-modules.nix) { inherit pkgs; };
-  make-simple-module = (import ../lib/make-simple-module.nix) { inherit pkgs; };
+  list-modules = (import ../lib/list-modules.nix) args;
+  make-simple-module = (import ../lib/make-simple-module.nix) args;
 
   lib = pkgs.lib;
 

@@ -1,14 +1,14 @@
-{ pkgs, ... }:
+{ pkgs, inputs, system, ... }:
 {category, path}:
 let
   module-name = pkgs.lib.removeSuffix ".nix" (baseNameOf path);
 in
-{ pkgs, config, lib, ... }@args:
+{ config, lib, ... }@args:
 let config-src = import path;
   moduleConfig = config.${category}.${module-name};
 
   additionalArgs = {
-    inherit moduleConfig;
+    inherit moduleConfig inputs pkgs system;
   };
 
   enableOption = {

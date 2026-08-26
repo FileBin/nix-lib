@@ -33,7 +33,7 @@
           inherit pkgs;
         };
 
-        nixosModules.default = (import ./modules) { inherit pkgs; };
+        nixosModules.default = (import ./modules) { inherit pkgs inputs system; };
       }
     );
 }
