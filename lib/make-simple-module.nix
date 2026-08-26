@@ -21,7 +21,7 @@ let config-src = import path;
   customOptions = if isSimple then enableOption.enable else (enableOption // unwrapped-config.customOptions);
 
   unwrapped-config = if builtins.isFunction config-src then config-src customArgs else config-src;
-  imports = if enabled then (unwrapped-config.imports or []) else [];
+  imports = unwrapped-config.imports or [];
   clean-config = removeAttrs unwrapped-config [ "imports" "customOptions" ];
 
   enabled = if isSimple then moduleConfig else moduleConfig.enable;
