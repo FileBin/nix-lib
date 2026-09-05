@@ -1,25 +1,26 @@
   { lib, system, ... }:
   {
     name,
-    configName ? "${name}-module",
     stateDir,
     extraBinds ? { postgres = false; },
     config
   }:
   let
-    conainerModule = lib.nixosSystem {
+    containerModule = lib.nixosSystem {
       inherit system;
       modules = [ config ];
     };
+
+    containerConfig = config;
   in
   {
-    flake.nixosModules."${name}-module" = config;
+    nixosModules."${name}-module" = config;
 
     # 1. Automatically generate the flake internal nixosSystem output
-    flake.nixosConfigurations."${configName}" = conainerModule;
+    nixosConfigurations."${name}-container" = containerModule;
 
     # 2. Automatically generate the corresponding host module wrapping the container
-    flake.nixosModules."${name}-container" = { config, lib, pkgs, ... }:
+    nixosModules."${name}-container" = { config, lib, pkgs, ... }:
       let
         containerIp = config.containers.${name}.localAddress;
 
@@ -44,7 +45,7 @@
 
           # Automatically manage host folder creation permissions via systemd-tmpfiles
           systemd.tmpfiles.rules = [
-            "d /srv/container-data/${name} 0750 gitea gitea - -"
+            "d /srv/container-data/${name} 0750 root root - -"
           ];
 
           # Instantiate the actual isolated system backend container interface
@@ -52,7 +53,7 @@
             autoStart = true;
             privateNetwork = true;
             bindMounts = computedBinds;
-            config = conainerModule;
+            config = containerConfig;
           };
         };
       };
