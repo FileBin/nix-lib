@@ -31,7 +31,7 @@
       {
         libExtension = selfLib: nix-lib-gen;
 
-        lib = nixpkgs.lib.extend self.libExtension;
+        lib = nixpkgs.lib.extend self.libExtension.${system};
 
         formatter = pkgs.nixfmt;
 
