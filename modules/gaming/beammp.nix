@@ -1,4 +1,4 @@
-{ pkgs, ... }:
+{ pkgs, unstable, ... }:
 {
   environment.systemPackages = 
   let
@@ -8,7 +8,7 @@
     };
 
 
-    launcher = pkgs.unstable.buildFHSEnv {
+    launcher = pkgs.buildFHSEnv {
       name = "BeamMP-Launcher";
       targetPkgs = pkgs: with pkgs; [
         nspr
@@ -42,7 +42,7 @@
         libvdpau
         libva
       ];
-      runScript = "${pkgs.unstable.beammp-launcher}/bin/BeamMP-Launcher";
+      runScript = "${unstable.beammp-launcher}/bin/BeamMP-Launcher";
     };
 
 

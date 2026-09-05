@@ -1,5 +1,5 @@
-{ pkgs, inputs, system, ... }:
-{category, path}:
+{ pkgs, ... }@libArgs:
+{ category, path }:
 let
   module-name = pkgs.lib.removeSuffix ".nix" (baseNameOf path);
 in
@@ -8,7 +8,7 @@ let config-src = import path;
   moduleConfig = config.${category}.${module-name};
 
   additionalArgs = {
-    inherit moduleConfig inputs pkgs system;
+    inherit moduleConfig;
   };
 
   enableOption = {
@@ -17,7 +17,7 @@ let config-src = import path;
 
   isSimple = !(builtins.hasAttr "customOptions" unwrapped-config);
 
-  customArgs = args // additionalArgs;
+  customArgs = args // additionalArgs // libArgs;
   customOptions = if isSimple then enableOption.enable else (enableOption // unwrapped-config.customOptions);
 
   unwrapped-config = if builtins.isFunction config-src then config-src customArgs else config-src;

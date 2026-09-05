@@ -1,5 +1,7 @@
-{ pkgs, ... }:
+args:
 rec {
-  mkUixShell = pkgs.callPackage (import ./mkUixShell.nix) { };
-  mkUixVscodeShell = pkgs.callPackage (import ./mkUixVscodeShell.nix { inherit mkUixShell; }) { };
+  mkUixShell = (import ./mkUixShell.nix) args;
+  mkWebContainer = (import ./mkWebContainer.nix) args;
+
+  mkUixVscodeShell = (import ./mkUixVscodeShell.nix) ({ inherit mkUixShell; } // args);
 }

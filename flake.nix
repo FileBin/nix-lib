@@ -24,10 +24,15 @@
         pkgs = import nixpkgs {
           inherit system;
         };
-        nix-lib = (import ./lib) { inherit pkgs; };
+        nix-lib-gen = lib: (import ./lib) { inherit pkgs lib system; };
+        nix-lib = nix-lib-gen pkgs.lib;
         nix-shared = (import "${inputs.nix-shared}");
       in
       {
+        libExtension = selfLib: nix-lib-gen;
+
+        formatter = pkgs.nixfmt;
+
         devShells.default = (import ./shell.nix) {
           inherit pkgs;
           inherit nix-lib;

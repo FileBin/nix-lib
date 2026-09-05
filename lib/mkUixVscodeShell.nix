@@ -1,5 +1,4 @@
-{ mkUixShell }:
-{ pkgs, lib, ... }:
+{ mkUixShell, pkgs, lib, ... }:
 {
   uixHook ? "start-vscode",
   uixShellGuid,
