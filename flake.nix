@@ -17,7 +17,7 @@
   };
 
   outputs =
-    { nixpkgs, flake-utils, ... }@inputs:
+    { self, nixpkgs, flake-utils, ... }@inputs:
     flake-utils.lib.eachDefaultSystem (
       system:
       let
@@ -30,6 +30,8 @@
       in
       {
         libExtension = selfLib: nix-lib-gen;
+
+        lib = nixpkgs.lib.extend self.libExtension;
 
         formatter = pkgs.nixfmt;
 
