@@ -3,6 +3,7 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
+    nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     nix-shared = {
       url = "http://gitea.home/filebin/nix-shared/archive/main.tar.gz";
@@ -17,13 +18,19 @@
   };
 
   outputs =
-    { self, nixpkgs, flake-utils, ... }@inputs:
+    { self, nixpkgs, nixpkgs-unstable, flake-utils, ... }@inputs:
     flake-utils.lib.eachDefaultSystem (
       system:
       let
-        pkgs = import nixpkgs {
+        pkg_args = {
           inherit system;
+          config.allowUnfree = true;
         };
+
+        pkgs = import nixpkgs pkg_args;
+
+        unstable = import nixpkgs-unstable pkg_args;
+
         nix-lib-gen = lib: (import ./lib) { inherit pkgs lib system; };
         nix-lib = nix-lib-gen pkgs.lib;
         nix-shared = (import "${inputs.nix-shared}");
@@ -45,7 +52,7 @@
           inherit pkgs;
         };
 
-        nixosModules.default = (import ./modules) { inherit pkgs inputs system; };
+        nixosModules.default = (import ./modules) { inherit pkgs inputs system unstable; };
       }
     );
 }
