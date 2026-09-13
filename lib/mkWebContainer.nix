@@ -1,6 +1,7 @@
 { lib, system, ... }:
 {
   name,
+  isPublic ? false,
   stateDirs ? [ ],
   extraBinds ? {
     postgres = false;
@@ -30,6 +31,8 @@ in
       ...
     }:
     let
+      subnetZone = if isPublic then "public" else "private";
+
       containerIp = config.containers.${name}.localAddress;
 
       # Dynamically map the stateDirs array into bind mounts mirroring the structure
@@ -64,7 +67,7 @@ in
     {
       config = {
         # Automatically inject the dynamic domain proxy forward rule for the host's easynginx
-        easynginx."${name}" = "http://${containerIp}:3000";
+        easynginx.${subnetZone}.${name} = "http://${containerIp}:3000";
 
         # Automatically manage host folder creation permissions via systemd-tmpfiles
         systemd.tmpfiles.rules = stateDirTmpfiles;
