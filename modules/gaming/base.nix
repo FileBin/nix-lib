@@ -24,6 +24,9 @@
     protonup-qt
     mangohud
     unstable.vesktop
+    unstable.discord
     bottles
+    vkbasalt
+    goverlay
   ];
 }
