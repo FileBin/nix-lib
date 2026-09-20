@@ -7,6 +7,7 @@
     postgres = false;
   },
   config,
+  httpPort ? 80,
 }:
 let
   containerModule = lib.nixosSystem {
@@ -67,7 +68,7 @@ in
     {
       config = {
         # Automatically inject the dynamic domain proxy forward rule for the host's easynginx
-        easynginx.${subnetZone}.${name} = "http://${containerIp}:3000";
+        easynginx.${subnetZone}.${name} = "http://${containerIp}:${toString httpPort}";
 
         # Automatically manage host folder creation permissions via systemd-tmpfiles
         systemd.tmpfiles.rules = stateDirTmpfiles;
