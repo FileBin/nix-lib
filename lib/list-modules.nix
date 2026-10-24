@@ -8,5 +8,6 @@ let
   );
 in
 map (file: dir + "/${file}") (
-  lib.filter (file: file != "default.nix") modules
+  # Только .nix-файлы: соседние ассеты (шаблоны, скрипты) не должны импортироваться.
+  lib.filter (file: lib.hasSuffix ".nix" file && file != "default.nix") modules
 )
