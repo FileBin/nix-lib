@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-# Seed-VC zero-shot voice conversion (speech mode, f0_condition=False).
-# Адаптация inference.py из Plachtaa/Seed-VC: те же шаги, но все модели
-# берутся из локальных путей (проставляются обёрткой), без скачивания из HF,
-# и результат пишется в один файл --output.
+# Seed-VC zero-shot voice conversion: speech (f0_condition=False) и singing
+# (f0_condition=True). Адаптация inference.py из Plachtaa/Seed-VC: те же шаги,
+# но все модели берутся из локальных путей (env-переменные от обёртки), без
+# скачивания из HF, и результат пишется в один файл --output.
 import os
 import sys
 import argparse
@@ -33,14 +33,22 @@ def load_models(args):
     if device.type != "cuda":
         print("[voice2voice] CUDA недоступен, работаю на CPU (медленно).", file=sys.stderr)
 
-    config = yaml.safe_load(open(args.config, "r"))
+    # DiT checkpoint + config: speech или f0
+    if args.f0_condition:
+        checkpoint_path = os.environ["VOICE2VOICE_CHECKPOINT_F0"]
+        config_path = os.environ["VOICE2VOICE_CONFIG_F0"]
+    else:
+        checkpoint_path = os.environ["VOICE2VOICE_CHECKPOINT"]
+        config_path = os.environ["VOICE2VOICE_CONFIG"]
+
+    config = yaml.safe_load(open(config_path, "r"))
     model_params = recursive_munch(config["model_params"])
     model_params.dit_type = "DiT"
     model = build_model(model_params, stage="DiT")
     sr = config["preprocess_params"]["sr"]
 
     model, _, _, _ = load_checkpoint(
-        model, None, args.checkpoint,
+        model, None, checkpoint_path,
         load_only_params=True, ignore_modules=[], is_distributed=False,
     )
     for key in model:
@@ -48,28 +56,30 @@ def load_models(args):
         model[key].to(device)
     model.cfm.estimator.setup_caches(max_batch_size=1, max_seq_length=8192)
 
-    # CAM++ (speaker embedding)
+    # CAM++ (speaker embedding) — общий для обоих режимов
     from modules.campplus.DTDNN import CAMPPlus
 
     campplus_model = CAMPPlus(feat_dim=80, embedding_size=192)
-    campplus_model.load_state_dict(torch.load(args.campplus, map_location="cpu"))
+    campplus_model.load_state_dict(torch.load(os.environ["VOICE2VOICE_CAMPLUS"], map_location="cpu"))
     campplus_model.eval()
     campplus_model.to(device)
 
-    # BigVGAN vocoder (локальная директория; CUDA-ядро не используется)
+    # BigVGAN vocoder: 22k (speech) или 44k/128band (f0)
     from modules.bigvgan import bigvgan
 
-    bigvgan_model = bigvgan.BigVGAN.from_pretrained(args.bigvgan_dir, use_cuda_kernel=False)
+    bigvgan_dir = os.environ["VOICE2VOICE_BIGVGAN_DIR_F0"] if args.f0_condition else os.environ["VOICE2VOICE_BIGVGAN_DIR"]
+    bigvgan_model = bigvgan.BigVGAN.from_pretrained(bigvgan_dir, use_cuda_kernel=False)
     bigvgan_model.remove_weight_norm()
     bigvgan_model = bigvgan_model.eval().to(device)
     vocoder_fn = bigvgan_model
 
-    # Whisper (speech tokenizer), только encoder
+    # Whisper (speech tokenizer), только encoder — общий
     from transformers import AutoFeatureExtractor, WhisperModel
 
-    whisper_model = WhisperModel.from_pretrained(args.whisper_dir, torch_dtype=torch.float16).to(device)
+    whisper_dir = os.environ["VOICE2VOICE_WHISPER_DIR"]
+    whisper_model = WhisperModel.from_pretrained(whisper_dir, torch_dtype=torch.float16).to(device)
     del whisper_model.decoder
-    whisper_feature_extractor = AutoFeatureExtractor.from_pretrained(args.whisper_dir)
+    whisper_feature_extractor = AutoFeatureExtractor.from_pretrained(whisper_dir)
 
     def semantic_fn(waves_16k):
         ori_inputs = whisper_feature_extractor(
@@ -92,6 +102,14 @@ def load_models(args):
         S_ori = S_ori[:, : waves_16k.size(-1) // 320 + 1]
         return S_ori
 
+    # F0-экстрактор (только singing)
+    f0_fn = None
+    if args.f0_condition:
+        from modules.rmvpe import RMVPE
+
+        f0_extractor = RMVPE(os.environ["VOICE2VOICE_RMVPE"], is_half=False, device=device)
+        f0_fn = f0_extractor.infer_from_audio
+
     mel_fn_args = {
         "n_fft": config["preprocess_params"]["spect_params"]["n_fft"],
         "win_size": config["preprocess_params"]["spect_params"]["win_length"],
@@ -104,7 +122,7 @@ def load_models(args):
     }
     to_mel = lambda x: mel_spectrogram(x, **mel_fn_args)
 
-    return model, semantic_fn, vocoder_fn, campplus_model, to_mel, mel_fn_args, device, sr
+    return model, semantic_fn, f0_fn, vocoder_fn, campplus_model, to_mel, mel_fn_args, device, sr
 
 
 def crossfade(chunk1, chunk2, overlap):
@@ -117,9 +135,17 @@ def crossfade(chunk1, chunk2, overlap):
     return chunk2
 
 
+def adjust_f0_semitones(f0_sequence, n_semitones):
+    factor = 2 ** (n_semitones / 12)
+    return f0_sequence * factor
+
+
 @torch.no_grad()
 def main(args):
-    model, semantic_fn, vocoder_fn, campplus_model, mel_fn, mel_fn_args, device, sr = load_models(args)
+    model, semantic_fn, f0_fn, vocoder_fn, campplus_model, mel_fn, mel_fn_args, device, sr = load_models(args)
+    f0_condition = args.f0_condition
+    auto_f0_adjust = args.auto_f0_adjust
+    pitch_shift = args.semi_tone_shift
     diffusion_steps = args.diffusion_steps
     length_adjust = args.length_adjust
     inference_cfg_rate = args.cfg_rate
@@ -127,8 +153,8 @@ def main(args):
     source_audio = librosa.load(args.source, sr=sr)[0]
     ref_audio = librosa.load(args.target, sr=sr)[0]
 
-    sr = 22050
-    hop_length = 256
+    sr = 22050 if not f0_condition else 44100
+    hop_length = 256 if not f0_condition else 512
     max_context_window = sr // hop_length * 30
     overlap_frame_len = 16
     overlap_wave_len = overlap_frame_len * hop_length
@@ -177,11 +203,34 @@ def main(args):
     feat2 = feat2 - feat2.mean(dim=0, keepdim=True)
     style2 = campplus_model(feat2.unsqueeze(0))
 
+    if f0_condition:
+        F0_ori = f0_fn(ori_waves_16k[0], thred=0.03)
+        F0_alt = f0_fn(converted_waves_16k[0], thred=0.03)
+        F0_ori = torch.from_numpy(F0_ori).to(device)[None]
+        F0_alt = torch.from_numpy(F0_alt).to(device)[None]
+        voiced_F0_ori = F0_ori[F0_ori > 1]
+        voiced_F0_alt = F0_alt[F0_alt > 1]
+        log_f0_alt = torch.log(F0_alt + 1e-5)
+        voiced_log_f0_ori = torch.log(voiced_F0_ori + 1e-5)
+        voiced_log_f0_alt = torch.log(voiced_F0_alt + 1e-5)
+        median_log_f0_ori = torch.median(voiced_log_f0_ori)
+        median_log_f0_alt = torch.median(voiced_log_f0_alt)
+        shifted_log_f0_alt = log_f0_alt.clone()
+        if auto_f0_adjust:
+            shifted_log_f0_alt[F0_alt > 1] = log_f0_alt[F0_alt > 1] - median_log_f0_alt + median_log_f0_ori
+        shifted_f0_alt = torch.exp(shifted_log_f0_alt)
+        if pitch_shift != 0:
+            shifted_f0_alt[F0_alt > 1] = adjust_f0_semitones(shifted_f0_alt[F0_alt > 1], pitch_shift)
+    else:
+        F0_ori = None
+        F0_alt = None
+        shifted_f0_alt = None
+
     cond, _, codes, commitment_loss, codebook_loss = model.length_regulator(
-        S_alt, ylens=target_lengths, n_quantizers=3, f0=None
+        S_alt, ylens=target_lengths, n_quantizers=3, f0=shifted_f0_alt
     )
     prompt_condition, _, codes, commitment_loss, codebook_loss = model.length_regulator(
-        S_ori, ylens=target2_lengths, n_quantizers=3, f0=None
+        S_ori, ylens=target2_lengths, n_quantizers=3, f0=F0_ori
     )
 
     max_source_window = max_context_window - mel2.size(2)
@@ -233,18 +282,15 @@ def main(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Seed-VC zero-shot voice conversion (speech)")
-    parser.add_argument("--source", "-s", required=True, help="исходная запись (ваш голос)")
+    parser = argparse.ArgumentParser(description="Seed-VC zero-shot voice conversion (speech + singing)")
+    parser.add_argument("--source", "-s", required=True, help="исходная запись (ваш голос/вокал)")
     parser.add_argument("--target", "-t", required=True, help="референс целевого голоса (1-25 с)")
     parser.add_argument("--output", "-o", required=True, help="куда писать wav")
-    parser.add_argument("--diffusion-steps", type=int, default=30, help="25=быстро, 30-50=качественнее")
+    parser.add_argument("--diffusion-steps", type=int, default=30, help="25=быстро, 30-50=качественнее, 50-100=лучшее")
     parser.add_argument("--length-adjust", type=float, default=1.0, help="<1 быстрее, >1 медленнее")
     parser.add_argument("--cfg-rate", type=float, default=0.7)
+    parser.add_argument("--f0-condition", type=str2bool, default=False, help="True = singing (44.1 кГц, с мелодией)")
+    parser.add_argument("--auto-f0-adjust", type=str2bool, default=False)
+    parser.add_argument("--semi-tone-shift", type=int, default=0, help="сдвиг высоты в полутонах (только singing)")
     parser.add_argument("--fp16", type=str2bool, default=True)
-    # внутренние пути моделей — проставляет обёртка, но можно переопределить
-    parser.add_argument("--checkpoint", required=True)
-    parser.add_argument("--config", required=True)
-    parser.add_argument("--campplus", required=True)
-    parser.add_argument("--bigvgan-dir", required=True)
-    parser.add_argument("--whisper-dir", required=True)
     main(parser.parse_args())

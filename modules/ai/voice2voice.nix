@@ -44,6 +44,21 @@ let
     sha256 = cfg.ditConfigHash;
   };
 
+  ditF0Checkpoint = pkgs.fetchurl {
+    url = cfg.ditF0CheckpointUrl;
+    sha256 = cfg.ditF0CheckpointHash;
+  };
+
+  ditF0Config = pkgs.fetchurl {
+    url = cfg.ditF0ConfigUrl;
+    sha256 = cfg.ditF0ConfigHash;
+  };
+
+  rmvpe = pkgs.fetchurl {
+    url = cfg.rmvpeUrl;
+    sha256 = cfg.rmvpeHash;
+  };
+
   # CAM++ уже лежит в исходниках Seed-VC (обычный git-blob, не LFS).
   campplusBin = "${seedvcSrc}/campplus_cn_common.bin";
 
@@ -56,6 +71,19 @@ let
     cp ${pkgs.fetchurl {
       url = cfg.bigvganConfigUrl;
       sha256 = cfg.bigvganConfigHash;
+    }} $out/config.json
+    chmod -R u+w $out
+  '';
+
+  bigvganF0Dir = pkgs.runCommand "bigvgan-44k-512x" { } ''
+    mkdir -p $out
+    cp ${pkgs.fetchurl {
+      url = cfg.bigvganF0GeneratorUrl;
+      sha256 = cfg.bigvganF0GeneratorHash;
+    }} $out/bigvgan_generator.pt
+    cp ${pkgs.fetchurl {
+      url = cfg.bigvganF0ConfigUrl;
+      sha256 = cfg.bigvganF0ConfigHash;
     }} $out/config.json
     chmod -R u+w $out
   '';
@@ -119,15 +147,18 @@ let
     # модели локальные — запрещаем сетевые обращения к HF
     export HF_HUB_OFFLINE=1
     export TRANSFORMERS_OFFLINE=1
+    export VOICE2VOICE_CHECKPOINT="${ditCheckpoint}"
+    export VOICE2VOICE_CONFIG="${ditConfig}"
+    export VOICE2VOICE_CHECKPOINT_F0="${ditF0Checkpoint}"
+    export VOICE2VOICE_CONFIG_F0="${ditF0Config}"
+    export VOICE2VOICE_CAMPLUS="${campplusBin}"
+    export VOICE2VOICE_BIGVGAN_DIR="${bigvganDir}"
+    export VOICE2VOICE_BIGVGAN_DIR_F0="${bigvganF0Dir}"
+    export VOICE2VOICE_RMVPE="${rmvpe}"
+    export VOICE2VOICE_WHISPER_DIR="${whisperDir}"
     # mp3/flac на входе читает librosa через audioread -> нужен ffmpeg
     PATH=${lib.makeBinPath [ pkgs.ffmpeg-headless ]}:$PATH \
-      exec "$VENV/bin/python" "${./voice2voice.infer.py.in}" \
-        --checkpoint ${ditCheckpoint} \
-        --config ${ditConfig} \
-        --campplus ${campplusBin} \
-        --bigvgan-dir ${bigvganDir} \
-        --whisper-dir ${whisperDir} \
-        "$@"
+      exec "$VENV/bin/python" "${./voice2voice.infer.py.in}" "$@"
   '';
 
   fhs = pkgs.buildFHSEnv {
@@ -234,6 +265,58 @@ in
     whisperGenerationHash = lib.mkOption {
       type = lib.types.str;
       default = "sha256-cVZbjvUNC/ehGT7Uu+0ZW5TnDBiJTYG7ovEjPc7Dq1M=";
+    };
+
+    ditF0CheckpointUrl = lib.mkOption {
+      type = lib.types.str;
+      default = "https://huggingface.co/Plachta/Seed-VC/resolve/main/DiT_seed_v2_uvit_whisper_base_f0_44k_bigvgan_pruned_ft_ema_v2.pth";
+      description = "DiT-чекпойнт (singing, 44.1 кГц, f0)";
+    };
+
+    ditF0CheckpointHash = lib.mkOption {
+      type = lib.types.str;
+      default = "sha256-Qq75P/5lhXyEDScCUvoED3ugRRSUXsRg86wawqlt5oQ=";
+    };
+
+    ditF0ConfigUrl = lib.mkOption {
+      type = lib.types.str;
+      default = "https://huggingface.co/Plachta/Seed-VC/resolve/main/config_dit_mel_seed_uvit_whisper_base_f0_44k.yml";
+    };
+
+    ditF0ConfigHash = lib.mkOption {
+      type = lib.types.str;
+      default = "sha256-/4bzQ7CMLe9AXwdQIu6xDa+6I8Tto20VEBD0ym16Ggo=";
+    };
+
+    bigvganF0GeneratorUrl = lib.mkOption {
+      type = lib.types.str;
+      default = "https://huggingface.co/nvidia/bigvgan_v2_44khz_128band_512x/resolve/main/bigvgan_generator.pt";
+    };
+
+    bigvganF0GeneratorHash = lib.mkOption {
+      type = lib.types.str;
+      default = "sha256-2f5+xr0LRO2dZpc9UBLYGBwVcLAeXHLfUZc+JB3M01c=";
+    };
+
+    bigvganF0ConfigUrl = lib.mkOption {
+      type = lib.types.str;
+      default = "https://huggingface.co/nvidia/bigvgan_v2_44khz_128band_512x/resolve/main/config.json";
+    };
+
+    bigvganF0ConfigHash = lib.mkOption {
+      type = lib.types.str;
+      default = "sha256-Zbf0h7+vFSVgVqdfZmfvX2QCFMmBkioRGSeHNwXqTds=";
+    };
+
+    rmvpeUrl = lib.mkOption {
+      type = lib.types.str;
+      default = "https://huggingface.co/lj1995/VoiceConversionWebUI/resolve/main/rmvpe.pt";
+      description = "RMVPE — F0-экстрактор для singing";
+    };
+
+    rmvpeHash = lib.mkOption {
+      type = lib.types.str;
+      default = "sha256-bWIhX0MG48ongkYYhgcgnwmvPcd+1CMu/dBpeYxOwZM=";
     };
 
     torchVersion = lib.mkOption {
