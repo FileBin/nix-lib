@@ -78,6 +78,48 @@ voice2voice ... --semi-tone-shift 2         # сдвиг высоты (толь�
 
 Остальные опции — пины URL/хешей моделей и версий зависимостей; см. `default.nix`.
 
+## Примеры настройки custom-опций
+
+Опции задаются через тот же атрибут `ai.voice2voice`, что и `enable`.
+Примеры ниже можно копировать в свой конфиг.
+
+### CPU-режим (нет ROCm-совместимого GPU)
+
+```nix
+{ config, pkgs, ... }: {
+  ai.voice2voice = {
+    enable = true;
+    user = "myuser";        # кому выдаются группы render/video (если GPU есть)
+    torchChannel = "cpu";   # fallback без ROCm — заметно медленнее
+  };
+}
+```
+
+### Смена версии ROCm / настройка под другой GPU
+
+```nix
+{ config, pkgs, ... }: {
+  ai.voice2voice = {
+    enable = true;
+    torchChannel = "rocm6.4";
+    torchVersion = "2.7.1+rocm6.4";
+    gfxVersion = "11.0.0";  # HSA_OVERRIDE_GFX_VERSION (RX 6600 = 10.3.0)
+  };
+}
+```
+
+### Подмена модели/чекпойнта (URL + хеш задаются парой)
+
+```nix
+{ config, pkgs, ... }: {
+  ai.voice2voice = {
+    enable = true;
+    ditCheckpointUrl = "https://huggingface.co/.../custom-dit.pth";
+    ditCheckpointHash = "sha256-...";  # nix-prefetch-url или nix flake prefetch
+  };
+}
+```
+
 ## Первый запуск и ресурсы
 
 - Веса моделей (~1.8 ГБ) скачиваются в nix store при сборке конфигурации
