@@ -7,6 +7,7 @@
 {
   pkgs,
   lib,
+  config,
   moduleConfig,
   ...
 }:
@@ -166,8 +167,18 @@ in
         "cuda"
         "cpu"
       ];
-      default = "rocm";
-      description = "Ускорение whisper.cpp: rocm | cuda | cpu";
+      default = if config.nixpkgs.config.rocmSupport or false then
+        "rocm"
+      else if config.nixpkgs.config.cudaSupport or false then
+        "cuda"
+      else
+        "cpu";
+      defaultText = lib.literalExpression ''
+        if config.nixpkgs.config.rocmSupport or false then "rocm"
+        else if config.nixpkgs.config.cudaSupport or false then "cuda"
+        else "cpu"
+      '';
+      description = "Ускорение whisper.cpp: rocm | cuda | cpu (по умолчанию — из nixpkgs.config)";
     };
 
     whisperModelUrl = lib.mkOption {
