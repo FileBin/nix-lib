@@ -139,7 +139,7 @@ let
     export KOKORO_MODEL_DIMA_PTH="${kokoroModelDima}"
     export KOKORO_CACHE="$CACHE"
     export HF_HOME="$CACHE/huggingface"
-    exec "$VENV/bin/python" "${./hermes-voice.kokoro_gen.py.in}" "$@"
+    exec "$VENV/bin/python" "${./kokoro_gen.py}" "$@"
   '';
 
   kokoroEnv = pkgs.buildFHSEnv {
