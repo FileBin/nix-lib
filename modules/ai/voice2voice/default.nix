@@ -158,7 +158,7 @@ let
     export VOICE2VOICE_WHISPER_DIR="${whisperDir}"
     # mp3/flac на входе читает librosa через audioread -> нужен ffmpeg
     PATH=${lib.makeBinPath [ pkgs.ffmpeg-headless ]}:$PATH \
-      exec "$VENV/bin/python" "${./voice2voice.infer.py.in}" "$@"
+      exec "$VENV/bin/python" "${./infer.py.in}" "$@"
   '';
 
   fhs = pkgs.buildFHSEnv {
